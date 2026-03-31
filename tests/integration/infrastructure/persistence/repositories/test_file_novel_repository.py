@@ -133,3 +133,22 @@ class TestFileNovelRepository:
 
         assert len(retrieved.chapters) == 1
         assert retrieved.chapters[0].title == "第一章"
+
+    def test_list_all_with_corrupted_file(self, repository, storage):
+        """测试列出小说时跳过损坏的文件"""
+        # 保存一个正常的小说
+        novel = Novel(
+            id=NovelId("good-novel"),
+            title="正常小说",
+            author="作者",
+            target_chapters=10
+        )
+        repository.save(novel)
+
+        # 写入一个损坏的 JSON 文件
+        storage.write_text("novels/corrupted.json", "{ invalid json }")
+
+        # list_all 应该跳过损坏的文件，只返回正常的
+        novels = repository.list_all()
+        assert len(novels) == 1
+        assert novels[0].novel_id.value == "good-novel"

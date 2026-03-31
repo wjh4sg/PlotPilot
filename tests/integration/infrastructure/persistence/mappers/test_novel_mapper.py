@@ -135,3 +135,54 @@ class TestNovelMapper:
         assert restored.novel_id.value == original.novel_id.value
         assert restored.title == original.title
         assert len(restored.chapters) == len(original.chapters)
+
+    def test_from_dict_missing_required_field(self):
+        """测试缺少必需字段"""
+        data = {
+            "id": "test-novel",
+            "title": "测试小说",
+            # 缺少 author
+            "target_chapters": 10,
+            "stage": "planning",
+            "chapters": []
+        }
+
+        with pytest.raises(ValueError, match="Missing required fields"):
+            NovelMapper.from_dict(data)
+
+    def test_from_dict_invalid_stage(self):
+        """测试无效的 stage 值"""
+        data = {
+            "id": "test-novel",
+            "title": "测试小说",
+            "author": "测试作者",
+            "target_chapters": 10,
+            "stage": "invalid_stage",
+            "chapters": []
+        }
+
+        with pytest.raises(ValueError, match="Invalid novel data format"):
+            NovelMapper.from_dict(data)
+
+    def test_from_dict_missing_chapter_field(self):
+        """测试章节缺少必需字段"""
+        data = {
+            "id": "test-novel",
+            "title": "测试小说",
+            "author": "测试作者",
+            "target_chapters": 10,
+            "stage": "writing",
+            "chapters": [
+                {
+                    "id": "chapter-1",
+                    # 缺少 novel_id
+                    "number": 1,
+                    "title": "第一章",
+                    "content": "章节内容",
+                    "word_count": 4
+                }
+            ]
+        }
+
+        with pytest.raises(ValueError, match="Chapter missing required fields"):
+            NovelMapper.from_dict(data)

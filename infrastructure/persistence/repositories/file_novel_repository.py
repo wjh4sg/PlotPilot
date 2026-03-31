@@ -1,10 +1,13 @@
 """基于文件的 Novel 仓储实现"""
+import logging
 from typing import Optional, List
 from domain.novel.entities.novel import Novel
 from domain.novel.value_objects.novel_id import NovelId
 from domain.novel.repositories.novel_repository import NovelRepository
 from infrastructure.persistence.storage.backend import StorageBackend
 from infrastructure.persistence.mappers.novel_mapper import NovelMapper
+
+logger = logging.getLogger(__name__)
 
 
 class FileNovelRepository(NovelRepository):
@@ -49,14 +52,25 @@ class FileNovelRepository(NovelRepository):
         return NovelMapper.from_dict(data)
 
     def list_all(self) -> List[Novel]:
-        """列出所有小说"""
+        """列出所有小说
+
+        跳过损坏的文件并记录警告。
+
+        Returns:
+            小说列表
+        """
         files = self.storage.list_files("novels/*.json")
         novels = []
 
         for file_path in files:
-            data = self.storage.read_json(file_path)
-            novel = NovelMapper.from_dict(data)
-            novels.append(novel)
+            try:
+                data = self.storage.read_json(file_path)
+                novel = NovelMapper.from_dict(data)
+                novels.append(novel)
+            except Exception as e:
+                # 跳过损坏的文件，记录警告
+                logger.warning(f"Failed to load novel from {file_path}: {str(e)}")
+                continue
 
         return novels
 

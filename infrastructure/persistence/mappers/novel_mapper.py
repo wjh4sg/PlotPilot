@@ -53,25 +53,43 @@ class NovelMapper:
 
         Returns:
             Novel 实体
+
+        Raises:
+            ValueError: 如果数据格式不正确或缺少必需字段
         """
-        # 创建 Novel 实体
-        novel = Novel(
-            id=NovelId(data["id"]),
-            title=data["title"],
-            author=data["author"],
-            target_chapters=data["target_chapters"],
-            stage=NovelStage(data["stage"])
-        )
+        # 验证必需字段
+        required_fields = ["id", "title", "author", "target_chapters", "stage"]
+        missing_fields = [field for field in required_fields if field not in data]
+        if missing_fields:
+            raise ValueError(f"Missing required fields: {', '.join(missing_fields)}")
 
-        # 添加章节
-        for chapter_data in data.get("chapters", []):
-            chapter = Chapter(
-                id=chapter_data["id"],
-                novel_id=NovelId(chapter_data["novel_id"]),
-                number=chapter_data["number"],
-                title=chapter_data["title"],
-                content=chapter_data["content"]
+        try:
+            # 创建 Novel 实体
+            novel = Novel(
+                id=NovelId(data["id"]),
+                title=data["title"],
+                author=data["author"],
+                target_chapters=data["target_chapters"],
+                stage=NovelStage(data["stage"])
             )
-            novel.add_chapter(chapter)
 
-        return novel
+            # 添加章节
+            for chapter_data in data.get("chapters", []):
+                # 验证章节必需字段
+                chapter_required = ["id", "novel_id", "number", "title", "content", "word_count"]
+                chapter_missing = [field for field in chapter_required if field not in chapter_data]
+                if chapter_missing:
+                    raise ValueError(f"Chapter missing required fields: {', '.join(chapter_missing)}")
+
+                chapter = Chapter(
+                    id=chapter_data["id"],
+                    novel_id=NovelId(chapter_data["novel_id"]),
+                    number=chapter_data["number"],
+                    title=chapter_data["title"],
+                    content=chapter_data["content"]
+                )
+                novel.add_chapter(chapter)
+
+            return novel
+        except (ValueError, KeyError) as e:
+            raise ValueError(f"Invalid novel data format: {str(e)}") from e
