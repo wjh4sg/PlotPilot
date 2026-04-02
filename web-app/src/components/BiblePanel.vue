@@ -644,14 +644,16 @@ onMounted(() => {
 .bible-tabs {
   flex: 1;
   min-height: 0;
-  padding-left: 16px;
+  padding-left: 0;
   display: flex;
   flex-direction: column;
 }
 
 .bible-tabs :deep(.n-tabs-nav) {
-  padding-bottom: 4px;
+  padding-bottom: 0;
   margin-bottom: 0;
+  padding-left: 16px;
+  padding-right: 16px;
 }
 
 .bible-tabs :deep(.n-tabs-pane-wrapper) {
@@ -680,7 +682,7 @@ onMounted(() => {
 }
 
 .bible-form {
-  padding: 12px 16px 16px;
+  padding: 8px 16px 16px;
   display: flex;
   flex-direction: column;
   gap: 14px;
