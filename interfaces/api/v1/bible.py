@@ -1,11 +1,20 @@
 """Bible API 路由"""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
+import logging
 
 from application.services.bible_service import BibleService
+from application.services.auto_bible_generator import AutoBibleGenerator
+from application.services.auto_knowledge_generator import AutoKnowledgeGenerator
 from application.dtos.bible_dto import BibleDTO
-from interfaces.api.dependencies import get_bible_service
+from interfaces.api.dependencies import (
+    get_bible_service,
+    get_auto_bible_generator,
+    get_auto_knowledge_generator
+)
 from domain.shared.exceptions import EntityNotFoundError
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/bible", tags=["bible"])
@@ -105,6 +114,70 @@ class BulkUpdateBibleRequest(BaseModel):
 
 
 # Routes
+@router.post("/novels/{novel_id}/generate", status_code=202)
+async def generate_bible(
+    novel_id: str,
+    background_tasks: BackgroundTasks,
+    bible_generator: AutoBibleGenerator = Depends(get_auto_bible_generator),
+    knowledge_generator: AutoKnowledgeGenerator = Depends(get_auto_knowledge_generator)
+):
+    """手动触发 Bible 和 Knowledge 生成（异步）
+
+    用户创建小说后，前端调用此接口开始生成 Bible。
+    生成过程在后台进行，前端应轮询 /bible/novels/{novel_id}/bible/status 检查状态。
+
+    Args:
+        novel_id: 小说 ID
+        background_tasks: FastAPI 后台任务
+        bible_generator: Bible 生成器
+        knowledge_generator: Knowledge 生成器
+
+    Returns:
+        202 Accepted，表示生成任务已启动
+    """
+    async def _generate_task():
+        try:
+            # 获取小说信息（需要 title 和 target_chapters）
+            from interfaces.api.dependencies import get_novel_service
+            novel_service = get_novel_service()
+            novel = novel_service.get_novel(novel_id)
+            if not novel:
+                logger.error(f"Novel not found: {novel_id}")
+                return
+
+            # 生成 Bible
+            bible_data = await bible_generator.generate_and_save(
+                novel_id,
+                novel.title,
+                novel.target_chapters
+            )
+
+            # 构建 Bible 摘要供 Knowledge 生成使用
+            chars = bible_data.get("characters", [])
+            locs = bible_data.get("locations", [])
+            char_desc = "、".join(f"{c['name']}（{c.get('role', '')}）" for c in chars[:5])
+            loc_desc = "、".join(c['name'] for c in locs[:3])
+            bible_summary = f"主要角色：{char_desc}。重要地点：{loc_desc}。文风：{bible_data.get('style', '')}。"
+
+            # 生成初始 Knowledge
+            await knowledge_generator.generate_and_save(
+                novel_id,
+                novel.title,
+                bible_summary
+            )
+            logger.info(f"Bible and Knowledge generated successfully for {novel_id}")
+        except Exception as e:
+            logger.error(f"Failed to generate Bible/Knowledge for {novel_id}: {e}")
+
+    background_tasks.add_task(_generate_task)
+
+    return {
+        "message": "Bible generation started",
+        "novel_id": novel_id,
+        "status_url": f"/api/v1/bible/novels/{novel_id}/bible/status"
+    }
+
+
 @router.post("/novels/{novel_id}/bible", response_model=BibleDTO, status_code=201)
 async def create_bible(
     novel_id: str,
@@ -148,6 +221,31 @@ async def get_bible_by_novel(
             detail=f"Bible not found for novel: {novel_id}"
         )
     return bible
+
+
+@router.get("/novels/{novel_id}/bible/status")
+async def get_bible_status(
+    novel_id: str,
+    service: BibleService = Depends(get_bible_service)
+):
+    """检查 Bible 生成状态
+
+    Args:
+        novel_id: 小说 ID
+        service: Bible 服务
+
+    Returns:
+        状态信息：{ "exists": bool, "ready": bool }
+    """
+    bible = service.get_bible_by_novel(novel_id)
+    exists = bible is not None
+    ready = exists and len(bible.characters) > 0  # 有角色说明已生成完成
+
+    return {
+        "exists": exists,
+        "ready": ready,
+        "novel_id": novel_id
+    }
 
 
 @router.get("/novels/{novel_id}/bible/characters", response_model=list)
