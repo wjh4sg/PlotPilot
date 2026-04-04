@@ -45,6 +45,9 @@ from domain.novel.services.storyline_manager import StorylineManager
 from domain.bible.services.relationship_engine import RelationshipEngine
 from domain.ai.services.vector_store import VectorStore
 
+if TYPE_CHECKING:
+    from application.services.narrative_entity_state_service import NarrativeEntityStateService
+
 
 logger = logging.getLogger(__name__)
 
@@ -428,3 +431,19 @@ def get_scene_director_service() -> "SceneDirectorService":
         llm_service = MockProvider()
         logger.warning("No API key found, using MockProvider for scene director")
     return SceneDirectorService(llm_service=llm_service)
+
+
+def get_narrative_entity_state_service() -> "NarrativeEntityStateService":
+    """获取叙事实体状态服务
+
+    Returns:
+        NarrativeEntityStateService 实例
+    """
+    from application.services.narrative_entity_state_service import NarrativeEntityStateService
+    from infrastructure.persistence.database.sqlite_entity_base_repository import SqliteEntityBaseRepository
+    from infrastructure.persistence.database.sqlite_narrative_event_repository import SqliteNarrativeEventRepository
+
+    entity_base_repo = SqliteEntityBaseRepository(get_database())
+    narrative_event_repo = SqliteNarrativeEventRepository(get_database())
+
+    return NarrativeEntityStateService(entity_base_repo, narrative_event_repo)
