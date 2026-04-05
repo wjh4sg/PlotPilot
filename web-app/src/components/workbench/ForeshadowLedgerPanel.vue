@@ -1,0 +1,359 @@
+<template>
+  <div class="foreshadow-panel">
+    <header class="panel-header">
+      <div class="header-main">
+        <div class="title-row">
+          <h3 class="panel-title">伏笔账本</h3>
+          <n-tag size="small" round :bordered="false">Foreshadow Ledger</n-tag>
+        </div>
+        <p class="panel-lead">
+          管理已埋下但<strong>尚未兑现的伏笔</strong>，生成时 AI 会优先在上下文中呼应这些线索。
+        </p>
+      </div>
+      <n-space class="header-actions" :size="8" align="center">
+        <n-button size="small" secondary @click="openCreateModal">+ 添加伏笔</n-button>
+        <n-button size="small" type="primary" :loading="loading" @click="load">刷新</n-button>
+      </n-space>
+    </header>
+
+    <div class="panel-tabs">
+      <n-tabs v-model:value="activeTab" type="segment" size="small">
+        <n-tab name="pending">
+          待兑现
+          <n-badge v-if="pendingCount > 0" :value="pendingCount" :max="99" type="warning" style="margin-left:6px" />
+        </n-tab>
+        <n-tab name="consumed">已消费</n-tab>
+      </n-tabs>
+    </div>
+
+    <div class="panel-content">
+      <n-spin :show="loading">
+        <template v-if="activeTab === 'pending'">
+          <n-empty v-if="pendingEntries.length === 0" description="暂无待兑现伏笔，点击「添加伏笔」开始布局">
+            <template #icon><span style="font-size:42px">🪄</span></template>
+          </n-empty>
+          <n-space v-else vertical :size="10">
+            <n-card
+              v-for="entry in pendingEntries"
+              :key="entry.id"
+              size="small"
+              :bordered="true"
+              hoverable
+              class="entry-card"
+            >
+              <template #header>
+                <div class="entry-header">
+                  <n-tag type="warning" size="small" round>待兑现</n-tag>
+                  <n-text strong class="entry-clue">{{ entry.hidden_clue }}</n-text>
+                </div>
+              </template>
+              <n-space vertical :size="6">
+                <div class="info-row">
+                  <n-text depth="3" class="info-label">埋入章节</n-text>
+                  <n-text>第 {{ entry.chapter }} 章</n-text>
+                </div>
+                <div class="info-row">
+                  <n-text depth="3" class="info-label">关联角色</n-text>
+                  <n-text>{{ entry.character_id }}</n-text>
+                </div>
+                <div v-if="Object.keys(entry.sensory_anchors).length > 0" class="info-row anchors-row">
+                  <n-text depth="3" class="info-label">感官锚点</n-text>
+                  <div class="anchors-wrap">
+                    <n-tag
+                      v-for="(v, k) in entry.sensory_anchors"
+                      :key="k"
+                      size="tiny"
+                      round
+                      type="info"
+                    >{{ k }}：{{ v }}</n-tag>
+                  </div>
+                </div>
+              </n-space>
+              <template #action>
+                <n-space :size="6">
+                  <n-button size="tiny" type="success" secondary @click="markConsumed(entry)">标记已消费</n-button>
+                  <n-button size="tiny" secondary @click="openEditModal(entry)">编辑</n-button>
+                  <n-button size="tiny" type="error" secondary @click="remove(entry.id)">删除</n-button>
+                </n-space>
+              </template>
+            </n-card>
+          </n-space>
+        </template>
+
+        <template v-else>
+          <n-empty v-if="consumedEntries.length === 0" description="暂无已消费伏笔">
+            <template #icon><span style="font-size:42px">✅</span></template>
+          </n-empty>
+          <n-space v-else vertical :size="10">
+            <n-card
+              v-for="entry in consumedEntries"
+              :key="entry.id"
+              size="small"
+              :bordered="true"
+              class="entry-card entry-card--consumed"
+            >
+              <template #header>
+                <div class="entry-header">
+                  <n-tag type="success" size="small" round>已消费</n-tag>
+                  <n-text strong class="entry-clue">{{ entry.hidden_clue }}</n-text>
+                </div>
+              </template>
+              <n-space vertical :size="4">
+                <div class="info-row">
+                  <n-text depth="3" class="info-label">埋入</n-text>
+                  <n-text>第 {{ entry.chapter }} 章</n-text>
+                </div>
+                <div class="info-row">
+                  <n-text depth="3" class="info-label">兑现</n-text>
+                  <n-text>第 {{ entry.consumed_at_chapter }} 章</n-text>
+                </div>
+              </n-space>
+            </n-card>
+          </n-space>
+        </template>
+      </n-spin>
+    </div>
+
+    <!-- 创建/编辑弹窗 -->
+    <n-modal
+      v-model:show="showModal"
+      preset="card"
+      :title="editingEntry ? '编辑伏笔' : '添加伏笔'"
+      style="width: min(560px, 96vw)"
+    >
+      <n-form :model="form" label-placement="left" label-width="90" :show-feedback="false">
+        <n-space vertical :size="14">
+          <n-form-item label="隐藏线索">
+            <n-input
+              v-model:value="form.hidden_clue"
+              placeholder="例：主角腰间的玉佩微微发热，他没在意"
+              type="textarea"
+              :autosize="{ minRows: 2, maxRows: 4 }"
+            />
+          </n-form-item>
+          <n-form-item label="关联角色">
+            <n-input v-model:value="form.character_id" placeholder="角色名或 ID" />
+          </n-form-item>
+          <n-form-item label="埋入章节">
+            <n-input-number v-model:value="form.chapter" :min="1" style="width:100%" />
+          </n-form-item>
+          <n-form-item label="感官锚点">
+            <n-space vertical :size="6" style="width:100%">
+              <n-space v-for="(_, idx) in anchorRows" :key="idx" :size="6" align="center">
+                <n-input v-model:value="anchorRows[idx].key" placeholder="感官（视觉/听觉…）" style="width:110px" />
+                <n-input v-model:value="anchorRows[idx].value" placeholder="具体描述" style="flex:1" />
+                <n-button size="tiny" secondary @click="removeAnchor(idx)">✕</n-button>
+              </n-space>
+              <n-button size="tiny" secondary dashed @click="addAnchor">+ 添加锚点</n-button>
+            </n-space>
+          </n-form-item>
+        </n-space>
+      </n-form>
+      <template #action>
+        <n-space justify="end" :size="8">
+          <n-button @click="showModal = false">取消</n-button>
+          <n-button type="primary" :loading="saving" @click="handleSubmit">
+            {{ editingEntry ? '保存' : '添加' }}
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
+
+    <!-- 标记消费弹窗 -->
+    <n-modal v-model:show="showConsumeModal" preset="card" title="标记已消费" style="width: 380px">
+      <n-form label-placement="left" label-width="90" :show-feedback="false">
+        <n-form-item label="兑现章节">
+          <n-input-number v-model:value="consumeChapter" :min="1" style="width:100%" />
+        </n-form-item>
+      </n-form>
+      <template #action>
+        <n-space justify="end" :size="8">
+          <n-button @click="showConsumeModal = false">取消</n-button>
+          <n-button type="success" :loading="saving" @click="confirmConsumed">确认</n-button>
+        </n-space>
+      </template>
+    </n-modal>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import { useMessage } from 'naive-ui'
+import { foreshadowApi } from '../../api/foreshadow'
+import type { ForeshadowEntry } from '../../api/foreshadow'
+
+interface Props { slug: string }
+const props = defineProps<Props>()
+const message = useMessage()
+
+const loading = ref(false)
+const saving = ref(false)
+const entries = ref<ForeshadowEntry[]>([])
+const activeTab = ref<'pending' | 'consumed'>('pending')
+
+const pendingEntries = computed(() => entries.value.filter(e => e.status === 'pending'))
+const consumedEntries = computed(() => entries.value.filter(e => e.status === 'consumed'))
+const pendingCount = computed(() => pendingEntries.value.length)
+
+// 表单
+const showModal = ref(false)
+const editingEntry = ref<ForeshadowEntry | null>(null)
+const form = ref({ hidden_clue: '', character_id: '', chapter: 1 })
+const anchorRows = ref<{ key: string; value: string }[]>([])
+
+// 消费弹窗
+const showConsumeModal = ref(false)
+const consumingEntry = ref<ForeshadowEntry | null>(null)
+const consumeChapter = ref(1)
+
+const load = async () => {
+  loading.value = true
+  try {
+    entries.value = await foreshadowApi.list(props.slug)
+  } catch {
+    message.error('加载伏笔账本失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+const openCreateModal = () => {
+  editingEntry.value = null
+  form.value = { hidden_clue: '', character_id: '', chapter: 1 }
+  anchorRows.value = []
+  showModal.value = true
+}
+
+const openEditModal = (entry: ForeshadowEntry) => {
+  editingEntry.value = entry
+  form.value = { hidden_clue: entry.hidden_clue, character_id: entry.character_id, chapter: entry.chapter }
+  anchorRows.value = Object.entries(entry.sensory_anchors).map(([key, value]) => ({ key, value }))
+  showModal.value = true
+}
+
+const addAnchor = () => anchorRows.value.push({ key: '', value: '' })
+const removeAnchor = (idx: number) => anchorRows.value.splice(idx, 1)
+
+const buildAnchors = () => {
+  const result: Record<string, string> = {}
+  for (const row of anchorRows.value) {
+    if (row.key.trim()) result[row.key.trim()] = row.value
+  }
+  return result
+}
+
+const handleSubmit = async () => {
+  if (!form.value.hidden_clue.trim()) { message.warning('请输入隐藏线索'); return }
+  if (!form.value.character_id.trim()) { message.warning('请输入关联角色'); return }
+
+  saving.value = true
+  try {
+    if (editingEntry.value) {
+      await foreshadowApi.update(props.slug, editingEntry.value.id, {
+        hidden_clue: form.value.hidden_clue,
+        character_id: form.value.character_id,
+        chapter: form.value.chapter,
+        sensory_anchors: buildAnchors(),
+      })
+      message.success('伏笔已更新')
+    } else {
+      await foreshadowApi.create(props.slug, {
+        entry_id: `fsw-${Date.now()}`,
+        hidden_clue: form.value.hidden_clue,
+        character_id: form.value.character_id,
+        chapter: form.value.chapter,
+        sensory_anchors: buildAnchors(),
+      })
+      message.success('伏笔已添加，生成时 AI 会优先呼应')
+    }
+    showModal.value = false
+    await load()
+  } catch {
+    message.error('保存失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+const markConsumed = (entry: ForeshadowEntry) => {
+  consumingEntry.value = entry
+  consumeChapter.value = entry.chapter + 1
+  showConsumeModal.value = true
+}
+
+const confirmConsumed = async () => {
+  if (!consumingEntry.value) return
+  saving.value = true
+  try {
+    await foreshadowApi.markConsumed(props.slug, consumingEntry.value.id, consumeChapter.value)
+    message.success('已标记为消费')
+    showConsumeModal.value = false
+    await load()
+  } catch {
+    message.error('操作失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+const remove = async (id: string) => {
+  try {
+    await foreshadowApi.remove(props.slug, id)
+    message.success('已删除')
+    entries.value = entries.value.filter(e => e.id !== id)
+  } catch {
+    message.error('删除失败')
+  }
+}
+
+onMounted(load)
+</script>
+
+<style scoped>
+.foreshadow-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--aitext-panel-muted);
+}
+
+.panel-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--aitext-split-border);
+  background: var(--app-surface);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.header-main { flex: 1; min-width: 0; }
+.title-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.panel-title { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-color-1); }
+.panel-lead { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-color-3); }
+.header-actions { flex-shrink: 0; }
+
+.panel-tabs {
+  padding: 10px 16px 6px;
+  background: var(--app-surface);
+  border-bottom: 1px solid var(--aitext-split-border);
+}
+
+.panel-content { flex: 1; overflow-y: auto; padding: 14px 16px; }
+
+.entry-card { transition: opacity 0.2s; }
+.entry-card--consumed { opacity: 0.65; }
+.entry-header { display: flex; align-items: center; gap: 8px; }
+.entry-clue { flex: 1; min-width: 0; font-size: 13px; }
+
+.info-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+}
+.info-label { flex-shrink: 0; width: 56px; color: var(--text-color-3); }
+.anchors-row { align-items: flex-start; }
+.anchors-wrap { display: flex; flex-wrap: wrap; gap: 4px; }
+</style>

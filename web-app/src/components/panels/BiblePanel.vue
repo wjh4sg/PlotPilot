@@ -63,6 +63,60 @@
             class="bible-textarea"
           />
         </n-card>
+
+        <!-- 文风样本区块 -->
+        <n-card size="small" class="bible-card" :bordered="false" :segmented="{ content: true, footer: false }">
+          <template #header>
+            <div class="bcard-head">
+              <span class="bcard-icon bcard-icon-voice" aria-hidden="true">🎙</span>
+              <div>
+                <div class="bcard-title">文风样本（AI 学习用）</div>
+                <div class="bcard-desc">提交「AI 原稿 → 你的改稿」对，生成时 AI 会自动遵循你的改写习惯。
+                  <span v-if="fingerprint"> · 当前共 {{ fingerprint.sample_count }} 个样本，平均句长 {{ fingerprint.avg_sentence_length.toFixed(1) }} 字</span>
+                </div>
+              </div>
+            </div>
+          </template>
+          <n-space vertical :size="12">
+            <n-form-item label="AI 原稿" label-placement="top" :show-feedback="false">
+              <n-input
+                v-model:value="voiceForm.ai_original"
+                type="textarea"
+                :autosize="{ minRows: 3, maxRows: 8 }"
+                placeholder="粘贴 AI 生成的原文段落（改稿前）"
+              />
+            </n-form-item>
+            <n-form-item label="你的改稿" label-placement="top" :show-feedback="false">
+              <n-input
+                v-model:value="voiceForm.author_refined"
+                type="textarea"
+                :autosize="{ minRows: 3, maxRows: 8 }"
+                placeholder="粘贴你修改后的版本（AI 将学习你的改法）"
+              />
+            </n-form-item>
+            <n-space :size="8" align="center">
+              <n-form-item label="来自章节" label-placement="left" label-width="70" :show-feedback="false">
+                <n-input-number v-model:value="voiceForm.chapter_number" :min="1" style="width:90px" />
+              </n-form-item>
+              <n-form-item label="场景类型" label-placement="left" label-width="70" :show-feedback="false">
+                <n-select
+                  v-model:value="voiceForm.scene_type"
+                  :options="sceneTypeOptions"
+                  style="width:120px"
+                />
+              </n-form-item>
+              <n-button
+                type="primary"
+                size="small"
+                :loading="voiceSaving"
+                :disabled="!voiceForm.ai_original.trim() || !voiceForm.author_refined.trim()"
+                @click="submitVoiceSample"
+              >
+                提交样本
+              </n-button>
+            </n-space>
+          </n-space>
+        </n-card>
       </div>
     </n-scrollbar>
 
@@ -97,6 +151,8 @@ import { ref, watch, onMounted, computed } from 'vue'
 import { useMessage } from 'naive-ui'
 import { bibleApi } from '../../api/bible'
 import type { CharacterDTO, LocationDTO, TimelineNoteDTO, StyleNoteDTO } from '../../api/bible'
+import { voiceApi } from '../../api/voice'
+import type { VoiceFingerprintDTO } from '../../api/voice'
 
 
 
@@ -125,6 +181,40 @@ const jsonRaw = ref('')
 const showJsonModal = ref(false)
 const saving = ref(false)
 const generating = ref(false)
+
+// 文风样本
+const voiceForm = ref({ ai_original: '', author_refined: '', chapter_number: 1, scene_type: 'general' })
+const voiceSaving = ref(false)
+const fingerprint = ref<VoiceFingerprintDTO | null>(null)
+const sceneTypeOptions = [
+  { label: '通用', value: 'general' },
+  { label: '战斗', value: 'combat' },
+  { label: '对话', value: 'dialogue' },
+  { label: '心理', value: 'inner' },
+  { label: '环境', value: 'environment' },
+]
+
+const loadFingerprint = async () => {
+  try {
+    fingerprint.value = await voiceApi.getFingerprint(props.slug)
+  } catch {
+    fingerprint.value = null
+  }
+}
+
+const submitVoiceSample = async () => {
+  voiceSaving.value = true
+  try {
+    await voiceApi.createSample(props.slug, voiceForm.value)
+    message.success('文风样本已提交，AI 将在下次生成时参考你的改写习惯')
+    voiceForm.value = { ai_original: '', author_refined: '', chapter_number: 1, scene_type: 'general' }
+    await loadFingerprint()
+  } catch {
+    message.error('提交失败')
+  } finally {
+    voiceSaving.value = false
+  }
+}
 
 const stats = computed(() => {
   const styleOk = (state.value.style_notes || '').trim().length >= 20
@@ -297,6 +387,7 @@ watch(
 
 onMounted(() => {
   void load()
+  void loadFingerprint()
 })
 </script>
 

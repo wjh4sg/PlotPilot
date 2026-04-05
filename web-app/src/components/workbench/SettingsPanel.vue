@@ -24,6 +24,10 @@
       <n-tab-pane name="timeline" tab="时间线">
         <TimelinePanel :slug="slug" />
       </n-tab-pane>
+
+      <n-tab-pane name="foreshadow" tab="伏笔">
+        <ForeshadowLedgerPanel :slug="slug" />
+      </n-tab-pane>
     </n-tabs>
 
     <!-- Chapter Info Card -->
@@ -64,6 +68,7 @@ import WorldbuildingPanel from './WorldbuildingPanel.vue'
 import StorylinePanel from './StorylinePanel.vue'
 import PlotArcPanel from './PlotArcPanel.vue'
 import TimelinePanel from './TimelinePanel.vue'
+import ForeshadowLedgerPanel from './ForeshadowLedgerPanel.vue'
 
 interface Chapter {
   id: number

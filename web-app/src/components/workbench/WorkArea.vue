@@ -226,6 +226,67 @@
             </n-space>
           </n-card>
 
+          <!-- 上下文预览 -->
+          <n-card size="small" :bordered="false">
+            <template #header>
+              <n-space align="center" justify="space-between" style="width:100%">
+                <n-space align="center" :size="6">
+                  <span style="font-size:13px;font-weight:600">上下文预览</span>
+                  <n-text depth="3" style="font-size:11px">AI 实际接收到的三层信息</n-text>
+                </n-space>
+                <n-button
+                  size="tiny"
+                  secondary
+                  :loading="loadingContext"
+                  @click="previewContext"
+                >
+                  {{ contextPreview ? '重新获取' : '预览' }}
+                </n-button>
+              </n-space>
+            </template>
+            <template v-if="contextPreview">
+              <!-- Token 分布 -->
+              <n-space vertical :size="8">
+                <n-space :size="6" wrap>
+                  <n-tag size="small" type="info" round>
+                    L1 核心 {{ contextPreview.token_usage.layer1 }} tok
+                  </n-tag>
+                  <n-tag size="small" type="success" round>
+                    L2 检索 {{ contextPreview.token_usage.layer2 }} tok
+                  </n-tag>
+                  <n-tag size="small" type="warning" round>
+                    L3 近期 {{ contextPreview.token_usage.layer3 }} tok
+                  </n-tag>
+                  <n-tag size="small" round>
+                    合计 {{ contextPreview.token_usage.total }} / {{ contextPreview.token_usage.limit }}
+                  </n-tag>
+                </n-space>
+                <n-progress
+                  type="line"
+                  :percentage="Math.round(contextPreview.token_usage.total / contextPreview.token_usage.limit * 100)"
+                  :height="6"
+                  :border-radius="4"
+                  :show-indicator="false"
+                  :color="contextPreview.token_usage.total / contextPreview.token_usage.limit > 0.9 ? '#f0a020' : '#18a058'"
+                />
+                <n-collapse>
+                  <n-collapse-item title="Layer 1 · 核心设定（Bible + 伏笔）" name="l1">
+                    <n-code :code="contextPreview.layer1.content" word-wrap style="font-size:11px;max-height:200px;overflow:auto" />
+                  </n-collapse-item>
+                  <n-collapse-item title="Layer 2 · 智能检索（向量相关段落）" name="l2">
+                    <n-code :code="contextPreview.layer2.content || '（向量检索未启用或无匹配）'" word-wrap style="font-size:11px;max-height:200px;overflow:auto" />
+                  </n-collapse-item>
+                  <n-collapse-item title="Layer 3 · 近期章节（滑动窗口）" name="l3">
+                    <n-code :code="contextPreview.layer3.content" word-wrap style="font-size:11px;max-height:200px;overflow:auto" />
+                  </n-collapse-item>
+                </n-collapse>
+              </n-space>
+            </template>
+            <n-text v-else depth="3" style="font-size:12px">
+              点击「预览」查看 AI 生成时实际使用的上下文内容及 token 分布。
+            </n-text>
+          </n-card>
+
           <n-card v-if="generating || generatedContent" title="生成内容" size="small" :bordered="false">
             <template #header-extra>
               <n-space :size="8">
@@ -266,7 +327,9 @@ import {
   consumeGenerateChapterStream,
   consumeHostedWriteStream,
   analyzeScene,
+  retrieveContext,
 } from '../../api/workflow'
+import type { ContextPreviewResult } from '../../api/workflow'
 import { chapterApi } from '../../api/chapter'
 
 interface Chapter {
@@ -323,6 +386,27 @@ const reviewResult = ref<{ score: number; suggestions: string[] } | null>(null)
 const useSceneDirector = ref(false)
 const analyzingScene = ref(false)
 const sceneDirectorError = ref('')
+
+// 上下文预览
+const contextPreview = ref<ContextPreviewResult | null>(null)
+const loadingContext = ref(false)
+
+const previewContext = async () => {
+  const chNum = currentChapter.value?.number
+  if (!chNum) return
+  loadingContext.value = true
+  try {
+    contextPreview.value = await retrieveContext(
+      props.slug,
+      chNum,
+      generateOutline.value || `第${chNum}章：承接前情，推进主线`,
+    )
+  } catch {
+    contextPreview.value = null
+  } finally {
+    loadingContext.value = false
+  }
+}
 
 // AbortController：点「停止」时真正取消后端 SSE 流
 const generateAbortCtrl = ref<AbortController | null>(null)
@@ -398,6 +482,7 @@ const handleGenerateChapter = async () => {
 
 承接前情，推进主线与人物节拍；保持人设与叙事节奏一致。`
   generatedContent.value = ''
+  contextPreview.value = null
   showGenerateModal.value = true
 }
 
@@ -556,7 +641,7 @@ const handleStartHosted = async () => {
           } else if (event.type === 'phase') {
             hostedLog.value += `[阶段: ${event.phase}]\n`
           } else if (event.type === 'done') {
-            hostedLog.value += `[完成] 章节 ${event.chapter} 生成完成，${event.content?.length || 0} 字符\n`
+            hostedLog.value += `[完成] 章节 ${event.chapter} 生成完成，${typeof event.content === 'string' ? event.content.length : 0} 字符\n`
           } else if (event.type === 'saved') {
             if (event.ok) {
               hostedLog.value += `[保存] 章节 ${event.chapter} 已保存${event.created ? '（新建）' : ''}\n`

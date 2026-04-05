@@ -333,7 +333,11 @@ export const workflowApi = {
       chapter_number: number
       suggestions: string[]
       score: number
-    }>(`/novels/${novelId}/chapters/${chapterNumber}/review`, {}),
+    }>(`/novels/${novelId}/chapters/${chapterNumber}/review`, {}) as unknown as Promise<{
+      chapter_number: number
+      suggestions: string[]
+      score: number
+    }>,
 
   /** POST /api/v1/novels/{novel_id}/outline/extend */
   extendOutline: (novelId: string, fromChapter: number, count = 5) =>
@@ -342,4 +346,43 @@ export const workflowApi = {
       chapters_added: number
       outlines: string[]
     }>(`/novels/${novelId}/outline/extend`, { from_chapter: fromChapter, count }),
+}
+
+// ── 上下文预览 ──────────────────────────────────────────────
+
+export interface ContextLayerContent {
+  content: string
+}
+
+export interface ContextTokenUsage {
+  layer1: number
+  layer2: number
+  layer3: number
+  total: number
+  limit: number
+}
+
+export interface ContextPreviewResult {
+  layer1: ContextLayerContent
+  layer2: ContextLayerContent
+  layer3: ContextLayerContent
+  token_usage: ContextTokenUsage
+}
+
+export async function retrieveContext(
+  novelId: string,
+  chapterNumber: number,
+  outline: string,
+  maxTokens = 16000,
+  sceneDirectorResult?: Record<string, unknown>,
+): Promise<ContextPreviewResult> {
+  return apiClient.post<ContextPreviewResult>(
+    `/novels/${novelId}/context/retrieve`,
+    {
+      chapter_number: chapterNumber,
+      outline,
+      max_tokens: maxTokens,
+      scene_director_result: sceneDirectorResult,
+    }
+  ) as unknown as Promise<ContextPreviewResult>
 }
