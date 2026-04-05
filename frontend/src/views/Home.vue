@@ -146,10 +146,7 @@
 
       <footer class="home-footer">
         <a href="/architecture.html" target="_blank" class="architecture-link">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-            <path d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z"/>
-          </svg>
-          查看系统架构全景图
+          架构文档
         </a>
       </footer>
     </div>
@@ -560,28 +557,13 @@ onMounted(() => {
 }
 
 .architecture-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(14, 165, 233, 0.08));
-  border: 1px solid rgba(99, 102, 241, 0.2);
-  border-radius: 12px;
-  color: #4f46e5;
+  color: #94a3b8;
   text-decoration: none;
-  font-size: 14px;
-  font-weight: 500;
-  transition: all 0.3s ease;
+  font-size: 13px;
+  transition: color 0.2s ease;
 }
 
 .architecture-link:hover {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(14, 165, 233, 0.15));
-  border-color: rgba(99, 102, 241, 0.4);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
-}
-
-.architecture-link svg {
-  flex-shrink: 0;
+  color: #64748b;
 }
 </style>
