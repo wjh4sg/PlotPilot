@@ -219,22 +219,18 @@ class AutopilotDaemon:
             self._save_novel_state(novel)
 
     async def _handle_macro_planning(self, novel: Novel):
-        """处理宏观规划（规划部/卷/幕）"""
+        """处理宏观规划（规划部/卷/幕）- 使用极速模式让 AI 自主推断结构"""
         if not self._is_still_running(novel):
             return
 
         target_chapters = novel.target_chapters or 30
-        structure_preference = {
-            "parts": 1,
-            "volumes_per_part": 1,
-            "acts_per_volume": 3,
-            "chapters_per_act": max(target_chapters // 3, 5)
-        }
 
+        # 使用极速模式：structure_preference=None，让 AI 根据目标章节数智能决定结构
+        # 这样 30 章、100 章、300 章、500 章会自动生成不同规模的叙事骨架
         result = await self.planning_service.generate_macro_plan(
             novel_id=novel.novel_id.value,
             target_chapters=target_chapters,
-            structure_preference=structure_preference
+            structure_preference=None  # 极速模式：AI 自主决定最优结构
         )
 
         if not self._is_still_running(novel):
@@ -422,10 +418,19 @@ class AutopilotDaemon:
         if not self._is_still_running(novel):
             return
 
-        # 1. 成本控制：达到最大章节数则自动停止
-        max_chapters = novel.max_auto_chapters or 50
-        if (novel.current_auto_chapters or 0) >= max_chapters:
-            logger.info(f"[{novel.novel_id}] 已达成本控制上限 {max_chapters} 章，自动停止")
+        # 1. 目标控制：达到目标章节数则自动停止（允许用户设置更高的 max_auto_chapters 作为保护上限）
+        target_chapters = novel.target_chapters or 50
+        max_chapters = novel.max_auto_chapters or 9999  # 保护上限，默认几乎无限制
+        current_chapters = novel.current_auto_chapters or 0
+
+        if current_chapters >= target_chapters:
+            logger.info(f"[{novel.novel_id}] 已达到目标章节数 {target_chapters} 章，全托管完成")
+            novel.autopilot_status = AutopilotStatus.STOPPED
+            novel.current_stage = NovelStage.COMPLETED
+            return
+
+        if current_chapters >= max_chapters:
+            logger.info(f"[{novel.novel_id}] 已达保护上限 {max_chapters} 章，自动暂停（目标为 {target_chapters} 章）")
             novel.autopilot_status = AutopilotStatus.STOPPED
             novel.current_stage = NovelStage.PAUSED_FOR_REVIEW
             return
@@ -504,7 +509,7 @@ class AutopilotDaemon:
         # 5. 节拍放大
         beats = []
         if self.context_builder:
-            beats = self.context_builder.magnify_outline_to_beats(outline, target_chapter_words=2500)
+            beats = self.context_builder.magnify_outline_to_beats(outline, target_chapter_words=3500)
 
         if not self._is_still_running(novel):
             logger.info(f"[{novel.novel_id}] 用户已停止（节拍拆分后）")
@@ -701,6 +706,9 @@ class AutopilotDaemon:
             novel.autopilot_status = AutopilotStatus.STOPPED
             novel.current_stage = NovelStage.COMPLETED
 
+        # 6. 自动触发宏观诊断（每10章或幕完成时）
+        await self._auto_trigger_macro_diagnosis(novel, len(completed))
+
     def _legacy_auditing_tasks_and_voice(
         self,
         novel: Novel,
@@ -726,6 +734,51 @@ class AutopilotDaemon:
             except Exception as e:
                 logger.warning("文风检测失败（跳过）：%s", e)
         return {"drift_alert": False, "similarity_score": None}
+
+    async def _auto_trigger_macro_diagnosis(self, novel: Novel, completed_count: int) -> None:
+        """自动触发宏观诊断（每10章或幕完成时）
+
+        触发条件：
+        1. 每10章触发一次
+        2. 每幕完成时触发一次
+        """
+        try:
+            # 判断是否需要触发
+            should_trigger = False
+            trigger_reason = ""
+
+            # 条件1：每10章
+            if completed_count > 0 and completed_count % 10 == 0:
+                should_trigger = True
+                trigger_reason = f"每10章检查点（当前{completed_count}章）"
+
+            # 条件2：幕完成（current_chapter_in_act回到0表示新幕开始）
+            if novel.current_chapter_in_act == 0 and novel.current_act > 0:
+                should_trigger = True
+                trigger_reason = f"第{novel.current_act}幕完成"
+
+            if not should_trigger:
+                return
+
+            logger.info(f"[{novel.novel_id}] 📊 自动触发宏观诊断：{trigger_reason}")
+
+            # 调用宏观诊断服务（后台异步执行，不阻塞写作流程）
+            asyncio.create_task(self._run_macro_diagnosis_background(novel.novel_id.value))
+
+        except Exception as e:
+            logger.warning(f"[{novel.novel_id}] 自动触发宏观诊断失败: {e}")
+
+    async def _run_macro_diagnosis_background(self, novel_id: str) -> None:
+        """后台执行宏观诊断"""
+        try:
+            from application.blueprint.services.continuous_planning_service import ContinuousPlanningService
+
+            # 这里可以调用宏观诊断的逻辑
+            # 目前只是记录日志，后续可以扩展为实际诊断
+            logger.info(f"[{novel_id}] 宏观诊断后台任务已启动")
+
+        except Exception as e:
+            logger.warning(f"[{novel_id}] 宏观诊断后台任务失败: {e}")
 
     async def _score_tension(self, content: str) -> int:
         """给章节打张力分（1-10），用于判断是否插入缓冲章"""
