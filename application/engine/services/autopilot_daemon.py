@@ -458,7 +458,7 @@ class AutopilotDaemon:
             outline = f"【缓冲章：日常过渡】{outline}。主角战后休整，与配角闲聊，展示收获，节奏轻松。"
 
         logger.info(f"[{novel.novel_id}] 📖 开始写第 {chapter_num} 章：{outline[:60]}...")
-        logger.info(f"[{novel.novel_id}]    进度: {novel.current_auto_chapters or 0}/{novel.max_auto_chapters or 50} 章")
+        logger.info(f"[{novel.novel_id}]    进度: {current_chapters}/{target_chapters} 章（目标）")
 
         if not self._is_still_running(novel):
             logger.info(f"[{novel.novel_id}] 用户已停止，跳过本章（上下文组装前）")
@@ -622,7 +622,7 @@ class AutopilotDaemon:
         novel.current_stage = NovelStage.AUDITING
         self._flush_novel(novel)
 
-        logger.info(f"[{novel.novel_id}] 🎉 第 {chapter_num} 章完成：{len(chapter_content)} 字 (共 {novel.current_auto_chapters}/{novel.max_auto_chapters or 50} 章)")
+        logger.info(f"[{novel.novel_id}] 🎉 第 {chapter_num} 章完成：{len(chapter_content)} 字 (共 {novel.current_auto_chapters}/{novel.target_chapters} 章)")
 
     async def _handle_auditing(self, novel: Novel):
         """处理审计（含张力打分）"""

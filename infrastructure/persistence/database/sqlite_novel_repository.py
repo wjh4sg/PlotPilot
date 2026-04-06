@@ -72,7 +72,7 @@ class SqliteNovelRepository(NovelRepository):
         current_stage = _cs.value if isinstance(_cs, NovelStage) else _cs
         current_act = getattr(novel, 'current_act', 0)
         current_chapter_in_act = getattr(novel, 'current_chapter_in_act', 0)
-        max_auto_chapters = getattr(novel, 'max_auto_chapters', 50)
+        max_auto_chapters = getattr(novel, 'max_auto_chapters', 9999)
         current_auto_chapters = getattr(novel, 'current_auto_chapters', 0)
         last_chapter_tension = getattr(novel, 'last_chapter_tension', 0)
         consecutive_error_count = getattr(novel, 'consecutive_error_count', 0)
@@ -193,7 +193,7 @@ class SqliteNovelRepository(NovelRepository):
             current_stage=current_stage,
             current_act=row.get('current_act', 0),
             current_chapter_in_act=row.get('current_chapter_in_act', 0),
-            max_auto_chapters=row.get('max_auto_chapters', 50),
+            max_auto_chapters=row.get('max_auto_chapters', 9999),
             current_auto_chapters=row.get('current_auto_chapters', 0),
             last_chapter_tension=row.get('last_chapter_tension', 0),
             consecutive_error_count=row.get('consecutive_error_count', 0),
