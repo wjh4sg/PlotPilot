@@ -200,12 +200,17 @@ const convertToTreeNode = (node: StoryNode): any => {
     act: '🎬',
     chapter: '📄',
   }
+  const n = node.number
+  const displayName =
+    node.node_type === 'chapter' && typeof n === 'number' && n >= 1
+      ? `第${n}章 ${node.title || ''}`.trim()
+      : node.title
   return {
     key: node.id,
-    label: node.title,
+    label: displayName,
     ...node,
     icon: iconMap[node.node_type] || '📄',
-    display_name: node.title,
+    display_name: displayName,
     children: node.children?.map(convertToTreeNode) || [],
   }
 }
@@ -405,14 +410,16 @@ const renderLabel = ({ option }: { option: StoryNode }) => {
     h('span', { class: 'node-title' }, option.display_name),
   ]
   if (option.node_type === 'chapter') {
-    const hasContent = option.word_count && option.word_count > 0
+    const st = (option as StoryNode & { status?: string }).status
+    const hasContent =
+      (option.word_count && option.word_count > 0) || st === 'completed'
     elements.push(
       h(NTag, {
         size: 'small',
         type: hasContent ? 'success' : 'default',
         round: true,
         style: { marginLeft: '8px' },
-      }, () => hasContent ? '已收稿' : '未收稿')
+      }, () => (hasContent ? '已收稿' : '未收稿'))
     )
   }
   return h('span', { class: 'node-label' }, elements)

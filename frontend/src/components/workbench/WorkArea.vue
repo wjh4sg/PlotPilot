@@ -141,7 +141,11 @@
           日志里「阶段」若反复横跳，多为未跑守护进程或 DB 被多处写入。
         </n-alert>
         <div class="autopilot-container managed-autopilot">
-          <AutopilotPanel :novel-id="slug" @status-change="handleAutopilotStatusChange" />
+          <AutopilotPanel
+            :novel-id="slug"
+            @status-change="handleAutopilotStatusChange"
+            @desk-refresh="handleAutopilotDeskRefreshFromStream"
+          />
         </div>
         <div class="managed-monitor">
           <AutopilotDashboard :novel-id="slug" />
@@ -544,6 +548,16 @@ function maybeEmitDeskRefresh(status: Record<string, unknown> | null | undefined
 const handleAutopilotStatusChange = (status: any) => {
   autopilotStatus.value = status
   maybeEmitDeskRefresh(status)
+}
+
+/** SSE 已广播「进入待审阅」时立即拉 desk/结构树；与 /status 轮询并行，避免日志先变、侧栏仍旧 */
+let autopilotStreamDeskDebounce: ReturnType<typeof setTimeout> | null = null
+function handleAutopilotDeskRefreshFromStream() {
+  if (autopilotStreamDeskDebounce) clearTimeout(autopilotStreamDeskDebounce)
+  autopilotStreamDeskDebounce = setTimeout(() => {
+    autopilotStreamDeskDebounce = null
+    emit('chapterUpdated')
+  }, 400)
 }
 
 /** 辅助撰稿下不挂载驾驶舱，需独立轮询托管状态以支持「运行中只读」 */

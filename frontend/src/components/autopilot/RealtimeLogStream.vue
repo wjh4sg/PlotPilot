@@ -121,6 +121,11 @@ const props = defineProps<{
   novelId: string
 }>()
 
+const emit = defineEmits<{
+  /** 宏观/幕级规划落库并进入待审阅时，通知工作台刷新结构树（与 HTTP 轮询解耦，避免日志已变而侧栏仍旧） */
+  'desk-refresh': []
+}>()
+
 // 状态管理
 const logEvents = ref<LogEvent[]>([])
 const scrollContainer = ref<HTMLElement | null>(null)
@@ -230,6 +235,14 @@ function connectSSE() {
         // 限制日志条数（保留最新 100 条）
         if (logEvents.value.length > 100) {
           logEvents.value.shift()
+        }
+
+        if (data.type === 'stage_change' && data.metadata?.to_stage === 'paused_for_review') {
+          emit('desk-refresh')
+        }
+        // beat 级增量落库会影响章节字数/“已收稿”标签；收到 beat_complete 主动触发一次软刷新
+        if (data.type === 'beat_complete') {
+          emit('desk-refresh')
         }
 
         // 如果用户没有手动滚动，自动滚到底部

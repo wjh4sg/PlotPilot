@@ -615,6 +615,7 @@ class AutopilotDaemon:
         novel.current_chapter_in_act += 1
         novel.current_beat_index = 0
         novel.current_stage = NovelStage.AUDITING
+        self._flush_novel(novel)
 
         logger.info(f"[{novel.novel_id}] 🎉 第 {chapter_num} 章完成：{len(chapter_content)} 字 (共 {novel.current_auto_chapters}/{novel.max_auto_chapters or 50} 章)")
 
@@ -835,6 +836,11 @@ class AutopilotDaemon:
             NovelId(novel.novel_id.value), chapter_node.number
         )
         if existing:
+            # 防御：避免意外用空串覆盖已有正文（例如并发/异常分支写入空内容）
+            if (not (content or "").strip()) and (existing.content or "").strip():
+                existing.status = ChapterStatus(status)
+                self.chapter_repository.save(existing)
+                return
             existing.update_content(content)
             existing.status = ChapterStatus(status)
             self.chapter_repository.save(existing)

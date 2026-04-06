@@ -259,6 +259,26 @@ async def autopilot_log_stream(novel_id: str):
     chapter_repo = get_chapter_repository()
 
     async def event_generator():
+        def _resolve_current_chapter_number(novel) -> Optional[int]:
+            """
+            日志流事件补齐“当前章节号”。
+            由于 Novel 表仅存 current_act/current_chapter_in_act（非全书章号），这里从章节表推断：
+            - 若有 draft 章：取最大 draft 章号（通常就是正在生成的那章，节拍级增量落库）
+            - 否则：取最大 completed 章号 + 1（作为“即将写入”的预测章号）
+            """
+            try:
+                chapters = chapter_repo.list_by_novel(NovelId(novel_id))
+                _st = lambda c: c.status.value if hasattr(c.status, "value") else c.status
+                drafts = [c for c in chapters if _st(c) == "draft"]
+                if drafts:
+                    return max(int(c.number) for c in drafts)
+                completed = [c for c in chapters if _st(c) == "completed"]
+                if completed:
+                    return max(int(c.number) for c in completed) + 1
+            except Exception:
+                return None
+            return None
+
         # 发送初始连接事件
         init_event = {
             "type": "connected",
@@ -284,6 +304,8 @@ async def autopilot_log_stream(novel_id: str):
 
                 current_stage = novel.current_stage.value
                 current_beat = getattr(novel, "current_beat_index", 0)
+                current_chapter_number = _resolve_current_chapter_number(novel)
+                chapter_label = f"第 {current_chapter_number} 章 · " if current_chapter_number else ""
 
                 # 检测阶段变更（去抖后推送）
                 if first_stage_poll:
@@ -322,12 +344,13 @@ async def autopilot_log_stream(novel_id: str):
                 if last_beat is not None and current_beat > last_beat:
                     event = {
                         "type": "beat_complete",
-                        "message": f"第 {act_display} 幕 · 节拍 {last_beat} 已生成完毕",
+                        "message": f"{chapter_label}第 {act_display} 幕 · 节拍 {last_beat} 已生成完毕",
                         "timestamp": datetime.now().isoformat(),
                         "metadata": {
                             "beat_index": last_beat,
                             "act": novel.current_act,
                             "act_display": act_display,
+                            "chapter_number": current_chapter_number,
                         },
                     }
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
@@ -335,12 +358,13 @@ async def autopilot_log_stream(novel_id: str):
                     # 新 beat 开始
                     event = {
                         "type": "beat_start",
-                        "message": f"第 {act_display} 幕 · 正在生成节拍 {current_beat}",
+                        "message": f"{chapter_label}第 {act_display} 幕 · 正在生成节拍 {current_beat}",
                         "timestamp": datetime.now().isoformat(),
                         "metadata": {
                             "beat_index": current_beat,
                             "act": novel.current_act,
                             "act_display": act_display,
+                            "chapter_number": current_chapter_number,
                         },
                     }
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
@@ -392,6 +416,7 @@ async def autopilot_log_stream(novel_id: str):
                     chapters = chapter_repo.list_by_novel(NovelId(novel_id))
                     _st = lambda c: c.status.value if hasattr(c.status, "value") else c.status
                     completed = [c for c in chapters if _st(c) == "completed"]
+                    drafts = [c for c in chapters if _st(c) == "draft"]
                     n_done = len(completed)
                     tgt = novel.target_chapters or 1
                     pct = round(n_done / tgt * 100, 1) if tgt else 0.0
@@ -403,6 +428,14 @@ async def autopilot_log_stream(novel_id: str):
                     stage_zh = _stage_name_zh(current_stage)
                     act_display = (novel.current_act or 0) + 1
                     tw = int(total_words) if total_words else 0
+                    current_chapter_number = None
+                    try:
+                        if drafts:
+                            current_chapter_number = max(int(c.number) for c in drafts)
+                        elif completed:
+                            current_chapter_number = max(int(c.number) for c in completed) + 1
+                    except Exception:
+                        current_chapter_number = None
                     progress_event = {
                         "type": "progress",
                         "message": (
@@ -420,6 +453,7 @@ async def autopilot_log_stream(novel_id: str):
                             "current_beat_index": current_beat,
                             "stage": current_stage,
                             "stage_label": stage_zh,
+                            "chapter_number": current_chapter_number,
                         },
                     }
                     yield f"data: {json.dumps(progress_event, ensure_ascii=False)}\n\n"

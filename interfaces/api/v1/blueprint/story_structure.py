@@ -8,6 +8,8 @@ from pydantic import BaseModel
 
 from application.blueprint.services.story_structure_service import StoryStructureService
 from infrastructure.persistence.database.story_node_repository import StoryNodeRepository
+from infrastructure.persistence.database.sqlite_chapter_repository import SqliteChapterRepository
+from infrastructure.persistence.database.connection import DatabaseConnection
 from application.paths import DATA_DIR
 import os
 
@@ -19,7 +21,8 @@ def get_service() -> StoryStructureService:
     """获取服务实例"""
     db_path = str(DATA_DIR / "aitext.db")
     repository = StoryNodeRepository(db_path)
-    return StoryStructureService(repository)
+    chapter_repo = SqliteChapterRepository(DatabaseConnection(db_path))
+    return StoryStructureService(repository, chapter_repository=chapter_repo)
 
 
 class CreateNodeRequest(BaseModel):

@@ -67,8 +67,13 @@ def _beats_from_structure_outline(novel_id: str, chapter_number: int) -> List[st
             outline = (n.outline or "").strip()
             if not outline:
                 return []
-            parts = re.split(r"[\n\r；;]+", outline)
-            return [p.strip() for p in parts if p.strip()][:32]
+            # 优先按“行”拆分；若为一段式大纲，则再按常见中文标点拆分，避免 beat_sections 为空
+            parts = re.split(r"[\n\r]+", outline)
+            cleaned = [p.strip() for p in parts if p.strip()]
+            if len(cleaned) <= 1:
+                parts = re.split(r"[；;。！？!?]+", outline)
+                cleaned = [p.strip() for p in parts if p.strip()]
+            return cleaned[:32]
     except Exception as e:
         logger.debug("从结构树取 outline 失败 novel=%s ch=%s: %s", novel_id, chapter_number, e)
     return []

@@ -3,30 +3,90 @@
 """
 
 import uuid
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, TYPE_CHECKING
 
+from domain.novel.value_objects.novel_id import NovelId
 from domain.structure.story_node import StoryNode, StoryTree, NodeType
 from infrastructure.persistence.database.story_node_repository import StoryNodeRepository
+
+if TYPE_CHECKING:
+    from domain.novel.repositories.chapter_repository import ChapterRepository
 
 
 class StoryStructureService:
     """故事结构服务"""
 
-    def __init__(self, repository: StoryNodeRepository):
+    def __init__(
+        self,
+        repository: StoryNodeRepository,
+        chapter_repository: Optional["ChapterRepository"] = None,
+    ):
         self.repository = repository
+        self._chapter_repository = chapter_repository
+
+    def _enrich_chapter_nodes_from_chapters_table(
+        self, novel_id: str, nodes: List[Dict[str, Any]]
+    ) -> None:
+        """章节正文写入 chapters 表后，story_nodes.word_count 可能未同步；展示时以章节表为准。"""
+        if not self._chapter_repository or not nodes:
+            return
+        try:
+            chapters = self._chapter_repository.list_by_novel(NovelId(novel_id))
+        except Exception:
+            return
+        by_num = {c.number: c for c in chapters}
+
+        def walk(ns: List[Dict[str, Any]]) -> None:
+            for n in ns:
+                if n.get("node_type") == "chapter":
+                    num = n.get("number")
+                    ch = by_num.get(num) if num is not None else None
+                    if ch is not None:
+                        wc = ch.word_count.value if hasattr(ch.word_count, "value") else int(ch.word_count)
+                        n["word_count"] = int(wc)
+                        st = ch.status.value if hasattr(ch.status, "value") else ch.status
+                        n["status"] = st
+                if n.get("children"):
+                    walk(n["children"])
+
+        walk(nodes)
+
+    def _enrich_flat_chapter_nodes(self, novel_id: str, nodes: List[Dict[str, Any]]) -> None:
+        if not self._chapter_repository or not nodes:
+            return
+        try:
+            chapters = self._chapter_repository.list_by_novel(NovelId(novel_id))
+        except Exception:
+            return
+        by_num = {c.number: c for c in chapters}
+        for n in nodes:
+            if n.get("node_type") != "chapter":
+                continue
+            num = n.get("number")
+            ch = by_num.get(num) if num is not None else None
+            if ch is None:
+                continue
+            wc = ch.word_count.value if hasattr(ch.word_count, "value") else int(ch.word_count)
+            n["word_count"] = int(wc)
+            st = ch.status.value if hasattr(ch.status, "value") else ch.status
+            n["status"] = st
 
     async def get_tree(self, novel_id: str) -> Dict[str, Any]:
         """获取小说的完整结构树"""
         tree = await self.repository.get_tree(novel_id)
+        data = tree.to_tree_dict()
+        self._enrich_chapter_nodes_from_chapters_table(novel_id, data.get("nodes") or [])
         return {
             "novel_id": novel_id,
-            "tree": tree.to_tree_dict()
+            "tree": data,
         }
 
     async def get_children(self, novel_id: str, parent_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """获取子节点（用于渐进式加载）"""
         nodes = await self.repository.get_children(parent_id)
-        return [node.to_dict() for node in nodes]
+        out = [node.to_dict() for node in nodes]
+        self._enrich_flat_chapter_nodes(novel_id, out)
+        return out
 
     async def create_node(
         self,

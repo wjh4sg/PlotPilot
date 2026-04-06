@@ -74,7 +74,11 @@
     </n-alert>
 
     <!-- 实时日志流 -->
-    <RealtimeLogStream v-if="isRunning" :novel-id="novelId" />
+    <RealtimeLogStream
+      v-if="isRunning"
+      :novel-id="novelId"
+      @desk-refresh="emit('desk-refresh')"
+    />
 
     <!-- 操作按钮 -->
     <n-space justify="end" size="small">
@@ -113,7 +117,7 @@ import { useMessage } from 'naive-ui'
 import RealtimeLogStream from './RealtimeLogStream.vue'
 
 const props = defineProps({ novelId: String })
-const emit = defineEmits(['status-change'])
+const emit = defineEmits(['status-change', 'desk-refresh'])
 const message = useMessage()
 
 const status = ref(null)
@@ -227,6 +231,7 @@ watch(
     if (statusPollDisabled.value) return
     if (running || review) {
       statusPollTimer = setInterval(() => fetchStatus(), 3000)
+      void fetchStatus()
     }
   },
   { immediate: true }
