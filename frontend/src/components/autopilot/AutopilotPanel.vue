@@ -80,6 +80,14 @@
       @desk-refresh="emit('desk-refresh')"
     />
 
+    <!-- 实时章节内容流（仅在写作阶段显示） -->
+    <ChapterWriterStream
+      v-if="isRunning"
+      :novel-id="novelId"
+      :is-writing="isWriting"
+      @content-update="handleChapterContentUpdate"
+    />
+
     <!-- 操作按钮 -->
     <n-space justify="end" size="small">
       <n-button v-if="needsReview" type="warning" size="small" :loading="toggling" @click="resume">
@@ -156,9 +164,10 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import RealtimeLogStream from './RealtimeLogStream.vue'
+import ChapterWriterStream from './ChapterWriterStream.vue'
 
 const props = defineProps({ novelId: String })
-const emit = defineEmits(['status-change', 'desk-refresh'])
+const emit = defineEmits(['status-change', 'desk-refresh', 'chapter-content-update'])
 const message = useMessage()
 
 const status = ref(null)
@@ -399,6 +408,10 @@ async function clearCircuitBreaker() {
   } finally {
     toggling.value = false
   }
+}
+
+function handleChapterContentUpdate(data) {
+  emit('chapter-content-update', data)
 }
 
 onMounted(() => { fetchStatus() })

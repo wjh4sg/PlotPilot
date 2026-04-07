@@ -25,3 +25,94 @@ export interface ApiClient {
 
 // 导出类型安全的 apiClient
 export const apiClient: ApiClient = axiosInstance as unknown as ApiClient
+
+// ============================================================================
+// SSE 流式接口辅助函数
+// ============================================================================
+
+export interface ChapterStreamEvent {
+  type: 'connected' | 'chapter_start' | 'chapter_content' | 'autopilot_stopped' | 'heartbeat'
+  message: string
+  timestamp: string
+  metadata?: {
+    chapter_number?: number
+    content?: string
+    word_count?: number
+    beat_index?: number
+    is_increment?: boolean
+  }
+}
+
+/**
+ * 订阅自动驾驶章节内容流（SSE）
+ * @param novelId 小说 ID
+ * @param handlers 事件处理器
+ * @returns AbortController 用于取消订阅
+ */
+export function subscribeChapterStream(
+  novelId: string,
+  handlers: {
+    onChapterStart?: (chapterNumber: number) => void
+    onChapterContent?: (data: { chapterNumber: number; content: string; wordCount: number; beatIndex: number }) => void
+    onAutopilotStopped?: (status: string) => void
+    onError?: (error: Error) => void
+  }
+): AbortController {
+  const ctrl = new AbortController()
+
+  ;(async () => {
+    try {
+      const res = await fetch(`/api/v1/autopilot/${novelId}/chapter-stream`, {
+        signal: ctrl.signal,
+      })
+
+      if (!res.ok || !res.body) {
+        handlers.onError?.(new Error(`HTTP ${res.status}`))
+        return
+      }
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        let sep: number
+        while ((sep = buffer.indexOf('\n\n')) >= 0) {
+          const block = buffer.slice(0, sep)
+          buffer = buffer.slice(sep + 2)
+
+          for (const line of block.split('\n')) {
+            if (!line.startsWith('data: ')) continue
+            try {
+              const event = JSON.parse(line.slice(6)) as ChapterStreamEvent
+
+              if (event.type === 'chapter_start' && event.metadata?.chapter_number) {
+                handlers.onChapterStart?.(event.metadata.chapter_number)
+              } else if (event.type === 'chapter_content' && event.metadata) {
+                handlers.onChapterContent?.({
+                  chapterNumber: event.metadata.chapter_number!,
+                  content: event.metadata.content || '',
+                  wordCount: event.metadata.word_count || 0,
+                  beatIndex: event.metadata.beat_index || 0,
+                })
+              } else if (event.type === 'autopilot_stopped') {
+                handlers.onAutopilotStopped?.(event.message)
+              }
+            } catch {
+              // 忽略解析错误
+            }
+          }
+        }
+      }
+    } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') return
+      handlers.onError?.(e instanceof Error ? e : new Error('Stream error'))
+    }
+  })()
+
+  return ctrl
+}

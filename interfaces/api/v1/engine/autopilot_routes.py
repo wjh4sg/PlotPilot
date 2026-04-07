@@ -490,6 +490,124 @@ async def autopilot_log_stream(novel_id: str):
     )
 
 
+@router.get("/{novel_id}/chapter-stream")
+async def autopilot_chapter_stream(novel_id: str):
+    """SSE 实时推送正在写作的章节内容
+
+    推送事件类型：
+    - chapter_content: 当前正在写作的章节内容增量
+    - chapter_complete: 章节写作完成
+    - chapter_start: 开始写新章节
+    """
+    novel_repo = get_novel_repository()
+    chapter_repo = get_chapter_repository()
+
+    async def event_generator():
+        last_chapter_number = None
+        last_content_length = 0
+        last_beat_index = -1
+        heartbeat_counter = 0
+
+        # 发送初始连接事件
+        init_event = {
+            "type": "connected",
+            "message": "章节内容流已连接",
+            "timestamp": datetime.now().isoformat()
+        }
+        yield f"data: {json.dumps(init_event, ensure_ascii=False)}\n\n"
+
+        while True:
+            try:
+                novel = novel_repo.get_by_id(NovelId(novel_id))
+                if not novel:
+                    break
+
+                # 检查是否终止
+                terminal_states = {"stopped", "error", "completed"}
+                if novel.autopilot_status.value in terminal_states:
+                    event = {
+                        "type": "autopilot_stopped",
+                        "message": f"自动驾驶已停止: {novel.autopilot_status.value}",
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    break
+
+                # 只在 writing 阶段推送内容
+                if novel.current_stage.value == "writing":
+                    # 获取 draft 章节（正在写作的章节）
+                    chapters = chapter_repo.list_by_novel(NovelId(novel_id))
+                    _st = lambda c: c.status.value if hasattr(c.status, "value") else c.status
+                    drafts = sorted(
+                        [c for c in chapters if _st(c) == "draft"],
+                        key=lambda c: c.number
+                    )
+
+                    current_beat = getattr(novel, "current_beat_index", 0) or 0
+
+                    if drafts:
+                        current_chapter = drafts[0]
+                        chapter_number = current_chapter.number
+                        content = current_chapter.content or ""
+                        content_length = len(content)
+
+                        # 检测新章节开始
+                        if last_chapter_number is not None and chapter_number != last_chapter_number:
+                            event = {
+                                "type": "chapter_start",
+                                "message": f"开始写第 {chapter_number} 章",
+                                "timestamp": datetime.now().isoformat(),
+                                "metadata": {
+                                    "chapter_number": chapter_number,
+                                },
+                            }
+                            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                            last_content_length = 0
+
+                        # 检测节拍变更（有新内容产生）
+                        if current_beat != last_beat_index or content_length > last_content_length:
+                            event = {
+                                "type": "chapter_content",
+                                "message": f"第 {chapter_number} 章 · 节拍 {current_beat}",
+                                "timestamp": datetime.now().isoformat(),
+                                "metadata": {
+                                    "chapter_number": chapter_number,
+                                    "content": content,
+                                    "word_count": content_length,
+                                    "beat_index": current_beat,
+                                    "is_increment": content_length > last_content_length,
+                                },
+                            }
+                            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                            last_content_length = content_length
+                            last_beat_index = current_beat
+
+                        last_chapter_number = chapter_number
+
+                # 心跳（每 5 次循环，约 5 秒）
+                heartbeat_counter += 1
+                if heartbeat_counter >= 5:
+                    heartbeat_event = {
+                        "type": "heartbeat",
+                        "message": "keepalive",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    yield f"data: {json.dumps(heartbeat_event, ensure_ascii=False)}\n\n"
+                    heartbeat_counter = 0
+
+                await asyncio.sleep(1)  # 每秒检查一次
+
+            except Exception as e:
+                logger.error(f"Chapter stream error: {e}")
+                break
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
+
 @router.get("/{novel_id}/events")
 async def autopilot_events(novel_id: str):
     """SSE 实时状态推送（每 3 秒）"""

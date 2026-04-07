@@ -154,6 +154,7 @@
             :novel-id="slug"
             @status-change="handleAutopilotStatusChange"
             @desk-refresh="handleAutopilotDeskRefreshFromStream"
+            @chapter-content-update="handleChapterContentUpdate"
           />
         </div>
         <div class="managed-monitor">
@@ -574,6 +575,20 @@ function handleAutopilotDeskRefreshFromStream() {
     autopilotStreamDeskDebounce = null
     emit('chapterUpdated')
   }, 400)
+}
+
+/** 自动驾驶章节内容流更新：实时显示正在写作的内容 */
+const streamingChapterNumber = ref<number | null>(null)
+const streamingContent = ref('')
+
+function handleChapterContentUpdate(data: { chapterNumber: number; content: string; wordCount: number }) {
+  streamingChapterNumber.value = data.chapterNumber
+  streamingContent.value = data.content
+
+  // 如果当前正在查看的章节就是正在写作的章节，实时更新编辑框内容
+  if (currentChapter.value && currentChapter.value.number === data.chapterNumber) {
+    chapterContent.value = data.content
+  }
 }
 
 /** 辅助撰稿下不挂载驾驶舱，需独立轮询托管状态以支持「运行中只读」 */
