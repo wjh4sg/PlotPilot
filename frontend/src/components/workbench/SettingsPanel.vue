@@ -45,7 +45,7 @@
       :tabs-padding="8"
     >
       <n-tab-pane name="storyline-arc" tab="故事线·弧光">
-        <StorylinePlotOverviewPanel :slug="slug" />
+        <StorylinePlotOverviewPanel :slug="slug" :current-chapter="currentChapter?.number ?? null" />
       </n-tab-pane>
       <n-tab-pane name="chronicles" tab="全息编年史">
         <HolographicChroniclesPanel :slug="slug" />

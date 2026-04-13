@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import Dict, List, Optional
 from application.workflows.auto_novel_generation_workflow import AutoNovelGenerationWorkflow
 from application.engine.services.hosted_write_service import HostedWriteService
 from application.engine.dtos.scene_director_dto import SceneDirectorAnalysis
@@ -85,8 +85,34 @@ class GenerateChapterRequest(BaseModel):
     scene_director_result: Optional[dict] = Field(None, description="可选的场记分析结果")
 
 
+class StorylineMilestoneResponse(BaseModel):
+    """故事线里程碑响应"""
+    order: int
+    title: str
+    description: str = ""
+    target_chapter_start: int
+    target_chapter_end: int
+    prerequisites: List[str] = []
+    triggers: List[str] = []
+
+
+class StorylineMergePoint(BaseModel):
+    """故事线合并点（多线交汇的章节）"""
+    chapter_number: int
+    storyline_ids: List[str]
+    merge_type: str = "convergence"  # convergence(汇聚) / divergence(分叉)
+    description: str = ""
+
+
+class StorylineGraphData(BaseModel):
+    """Git Graph 视图所需的全量数据"""
+    storylines: List['StorylineResponse']
+    merge_points: List[StorylineMergePoint] = []
+    total_chapters: int = 0
+
+
 class StorylineResponse(BaseModel):
-    """故事线响应"""
+    """故事线响应（增强版，含里程碑）"""
     id: str
     storyline_type: str
     status: str
@@ -94,6 +120,10 @@ class StorylineResponse(BaseModel):
     estimated_chapter_end: int
     name: str = ""
     description: str = ""
+    milestones: List[StorylineMilestoneResponse] = []
+    current_milestone_index: int = 0
+    last_active_chapter: int = 0
+    progress_summary: str = ""
 
 
 class CreateStorylineRequest(BaseModel):
@@ -120,6 +150,19 @@ class SuggestMainPlotOptionsResponse(BaseModel):
 
 
 def _storyline_to_response(storyline) -> StorylineResponse:
+    milestones = []
+    for ms in getattr(storyline, "milestones", []) or []:
+        milestones.append(
+            StorylineMilestoneResponse(
+                order=ms.order,
+                title=ms.title,
+                description=ms.description,
+                target_chapter_start=ms.target_chapter_start,
+                target_chapter_end=ms.target_chapter_end,
+                prerequisites=list(ms.prerequisites or []),
+                triggers=list(ms.triggers or []),
+            )
+        )
     return StorylineResponse(
         id=storyline.id,
         storyline_type=storyline.storyline_type.value,
@@ -128,6 +171,10 @@ def _storyline_to_response(storyline) -> StorylineResponse:
         estimated_chapter_end=storyline.estimated_chapter_end,
         name=getattr(storyline, "name", "") or "",
         description=getattr(storyline, "description", "") or "",
+        milestones=milestones,
+        current_milestone_index=getattr(storyline, "current_milestone_index", 0),
+        last_active_chapter=getattr(storyline, "last_active_chapter", 0),
+        progress_summary=getattr(storyline, "progress_summary", "") or "",
     )
 
 
@@ -307,6 +354,98 @@ def get_storylines(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get storylines: {str(e)}"
         )
+
+
+@router.get(
+    "/{novel_id}/storylines/graph-data",
+    response_model=StorylineGraphData,
+    status_code=status.HTTP_200_OK
+)
+def get_storyline_graph_data(
+    novel_id: str,
+    manager: StorylineManager = Depends(get_storyline_manager)
+):
+    """获取 Git Graph 视图所需的全量数据（故事线 + 合并点）"""
+    try:
+        storylines = manager.repository.get_by_novel_id(NovelId(novel_id))
+        sl_responses = [_storyline_to_response(sl) for sl in storylines]
+
+        # 自动计算合并点：多条故事线章节范围重叠的区间
+        merge_points = _compute_merge_points(sl_responses)
+
+        # 计算总章节数
+        all_chapters = set()
+        for sl in sl_responses:
+            for c in range(sl.estimated_chapter_start, sl.estimated_chapter_end + 1):
+                all_chapters.add(c)
+
+        return StorylineGraphData(
+            storylines=sl_responses,
+            merge_points=merge_points,
+            total_chapters=len(all_chapters),
+        )
+    except Exception as e:
+        logger.exception("get_storyline_graph_data failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get graph data: {str(e)}"
+        )
+
+
+def _compute_merge_points(storylines: List[StorylineResponse]) -> List[StorylineMergePoint]:
+    """自动计算故事线之间的合并点（章节重叠区域）
+
+    算法：
+      1. 收集所有 (chapter -> [storyline_ids]) 的映射
+      2. 被 >=2 条线覆盖的章节即为合并点
+      3. 将连续的合并章节约简为区间
+    """
+    if len(storylines) < 2:
+        return []
+
+    chapter_to_lines: Dict[int, List[str]] = {}
+    for sl in storylines:
+        for c in range(sl.estimated_chapter_start, sl.estimated_chapter_end + 1):
+            if c not in chapter_to_lines:
+                chapter_to_lines[c] = []
+            chapter_to_lines[c].append(sl.id)
+
+    # 找出被多条线覆盖的章节
+    merge_chapters = sorted([c for c, ids in chapter_to_lines.items() if len(ids) >= 2])
+
+    if not merge_chapters:
+        return []
+
+    # 将连续的合并章节约简为区间
+    merge_points: List[StorylineMergePoint] = []
+    start_ch = merge_chapters[0]
+    prev_ch = merge_chapters[0]
+
+    for ch in merge_chapters[1:]:
+        if ch == prev_ch + 1:
+            prev_ch = ch
+        else:
+            # 输出上一个区间
+            ids = list(set(chapter_to_lines[start_ch]))
+            merge_points.append(StorylineMergePoint(
+                chapter_number=start_ch,
+                storyline_ids=ids,
+                merge_type="convergence",
+                description=f"第{start_ch}-{prev_ch}章：{'、'.join(ids)} 汇合",
+            ))
+            start_ch = ch
+            prev_ch = ch
+
+    # 最后一个区间
+    ids = list(set(chapter_to_lines[start_ch]))
+    merge_points.append(StorylineMergePoint(
+        chapter_number=start_ch,
+        storyline_ids=ids,
+        merge_type="convergence",
+        description=f"第{start_ch}-{prev_ch}章：多线汇合推进",
+    ))
+
+    return merge_points
 
 
 @router.post(

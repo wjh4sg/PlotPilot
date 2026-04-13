@@ -24,7 +24,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { NCard, NProgress, NButton, NSpin } from 'naive-ui'
+import { NCard, NProgress, NButton, NSpin, useMessage } from 'naive-ui'
 import { workflowApi } from '../../api/workflow'
 import type { JobStatusResponse } from '../../types/api'
 
@@ -35,6 +35,7 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+const message = useMessage()
 
 const emit = defineEmits<{
   completed: [status: JobStatusResponse]
@@ -105,7 +106,7 @@ const handleCancel = async () => {
     await workflowApi.cancelJob(props.jobId)
   } catch (error) {
     console.error('Failed to cancel job:', error)
-    window.$message?.error('取消任务失败，请稍后重试')
+        message.error('取消任务失败，请稍后重试')
     // Don't restart polling - user intended to cancel
   }
 }

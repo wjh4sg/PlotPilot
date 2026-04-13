@@ -11,6 +11,10 @@
         </p>
       </div>
       <n-space class="header-actions" :size="8" align="center" :wrap="false">
+        <n-radio-group v-model:value="viewMode" size="small" class="view-switcher">
+          <n-radio-button value="list">列表</n-radio-button>
+          <n-radio-button value="graph">Git Graph</n-radio-button>
+        </n-radio-group>
         <n-button
           class="panel-header-btn"
           size="small"
@@ -33,7 +37,13 @@
       </n-space>
     </header>
 
-    <div class="panel-content">
+    <!-- Git Graph 视图 -->
+    <div v-if="viewMode === 'graph'" class="panel-graph">
+      <StorylineGitGraph :slug="slug" :current-chapter="currentChapterNumber" />
+    </div>
+
+    <!-- 列表视图（折叠面板模式） -->
+    <div v-else class="panel-content">
       <n-spin :show="loading">
         <n-empty
           v-if="storylines.length === 0"
@@ -51,42 +61,63 @@
           </template>
         </n-empty>
 
-        <n-space v-else vertical :size="12">
-          <n-card
+        <n-collapse v-else :default-expanded-names="[mainPlotId]" accordion class="sl-collapse">
+          <n-collapse-item
             v-for="storyline in storylines"
             :key="storyline.id"
-            size="small"
-            :bordered="true"
-            hoverable
+            :name="storyline.id"
           >
             <template #header>
-              <div class="storyline-header">
-                <div class="storyline-header-main">
-                  <n-tag :type="getTypeColor(storyline.storyline_type)" size="small" round>
-                    {{ getTypeLabel(storyline.storyline_type) }}
-                  </n-tag>
-                  <n-text class="storyline-title" strong>
-                    {{ (storyline.name || '').trim() || `故事线 ${storyline.id.slice(0, 8)}` }}
-                  </n-text>
-                  <n-tag :type="getStatusColor(storyline.status)" size="small" round>
-                    {{ getStatusLabel(storyline.status) }}
-                  </n-tag>
-                </div>
-                <n-space :size="6" class="storyline-header-actions" @click.stop>
-                  <n-button size="tiny" secondary @click="editStoryline(storyline)">编辑</n-button>
-                  <n-button size="tiny" type="error" secondary @click="deleteStoryline(storyline.id)">删除</n-button>
-                </n-space>
+              <div class="collapse-header" @click.stop>
+                <n-tag :type="getTypeColor(storyline.storyline_type)" size="small" round>
+                  {{ getTypeLabel(storyline.storyline_type) }}
+                </n-tag>
+                <n-text class="collapse-title" strong>
+                  {{ (storyline.name || '').trim() || `故事线 ${storyline.id.slice(0, 8)}` }}
+                </n-tag>
+                <n-tag :type="getStatusColor(storyline.status)" size="small" round :bordered="false">
+                  {{ getStatusLabel(storyline.status) }}
+                </n-tag>
               </div>
             </template>
 
-            <n-space vertical :size="8">
+            <template #header-extra>
+              <n-space :size="6" @click.stop>
+                <n-button size="tiny" secondary @click="editStoryline(storyline)">编辑</n-button>
+                <n-button size="tiny" type="error" secondary @click="deleteStoryline(storyline.id)">删除</n-button>
+              </n-space>
+            </template>
+
+            <div class="collapse-body">
               <div class="info-row">
-                <n-text depth="3">章节范围:</n-text>
-                <n-text>第 {{ storyline.estimated_chapter_start }} - {{ storyline.estimated_chapter_end }} 章</n-text>
+                <span class="info-label">章节范围</span>
+                <span class="info-value">第 {{ storyline.estimated_chapter_start }} – {{ storyline.estimated_chapter_end }} 章</span>
               </div>
-            </n-space>
-          </n-card>
-        </n-space>
+              <div class="info-row" v-if="storyline.description">
+                <span class="info-label">描述</span>
+                <span class="info-value desc">{{ storyline.description }}</span>
+              </div>
+              <div class="info-row" v-if="storyline.progress_summary">
+                <span class="info-label">进度摘要</span>
+                <span class="info-value">{{ storyline.progress_summary }}</span>
+              </div>
+              <div class="info-row" v-if="storyline.last_active_chapter">
+                <span class="info-label">最后活跃</span>
+                <span class="info-value">第 {{ storyline.last_active_chapter }} 章</span>
+              </div>
+              <div class="collapse-milestones" v-if="storyline.milestones?.length">
+                <div class="ms-title">里程碑 ({{ storyline.milestones.length }})</div>
+                <div class="ms-list">
+                  <div v-for="(ms, mi) in storyline.milestones" :key="mi" class="ms-item">
+                    <span class="ms-dot" />
+                    <span class="ms-name">{{ ms.title }}</span>
+                    <span class="ms-range">Ch.{{ ms.target_chapter_start }}–{{ ms.target_chapter_end }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </n-collapse-item>
+        </n-collapse>
       </n-spin>
     </div>
 
@@ -131,22 +162,34 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useMessage, useDialog } from 'naive-ui'
 import { workflowApi } from '../../api/workflow'
 import type { StorylineDTO } from '../../api/workflow'
+import StorylineGitGraph from './StorylineGitGraph.vue'
 
 interface Props {
   slug: string
+  currentChapter?: number | null
 }
 
 const props = defineProps<Props>()
 const message = useMessage()
+
+/** 当前章节号（兼容 null/undefined） */
+const currentChapterNumber = computed(() => props.currentChapter ?? undefined)
 const dialog = useDialog()
 
+const viewMode = ref<'list' | 'graph'>('list')
 const loading = ref(false)
 const saving = ref(false)
 const storylines = ref<StorylineDTO[]>([])
+
+// 自动寻找主线作为默认展开项
+const mainPlotId = computed(() => {
+  const main = storylines.value.find(s => s.storyline_type === 'main_plot')
+  return main ? main.id : storylines.value[0]?.id || ''
+})
 const showCreateModal = ref(false)
 const editingStoryline = ref<StorylineDTO | null>(null)
 
@@ -393,5 +436,148 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   gap: 8px;
+}
+
+.view-switcher {
+  flex-shrink: 0;
+}
+
+.view-switcher :deep(.n-radio-button) {
+  --padding: 0 10px;
+}
+
+/* ==================== 折叠面板样式 ==================== */
+.sl-collapse {
+  padding: 4px 0;
+}
+
+.sl-collapse :deep(.n-collapse-item) {
+  border-radius: 10px;
+  margin-bottom: 8px;
+  background: var(--app-surface, #fff);
+  border: 1px solid var(--aitext-split-border, rgba(0,0,0,0.06));
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+  overflow: hidden;
+}
+
+.sl-collapse :deep(.n-collapse-item:hover) {
+  border-color: rgba(99, 102, 241, 0.2);
+  box-shadow: 0 2px 12px rgba(99, 102, 241, 0.08);
+}
+
+.sl-collapse :deep(.n-collapse-item__header) {
+  padding: 12px 14px !important;
+  min-height: auto;
+}
+
+.sl-collapse :deep(.n-collapse-item__header-main) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.collapse-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.collapse-title {
+  font-size: 13.5px !important;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collapse-body {
+  padding: 4px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 3px 0;
+}
+
+.info-label {
+  font-size: 12px;
+  color: var(--text-color-3, #94a3b8);
+  flex-shrink: 0;
+  min-width: 64px;
+}
+
+.info-value {
+  font-size: 12px;
+  color: var(--text-color-1, #0f172a);
+  text-align: right;
+}
+
+.info-value.desc {
+  text-align: left;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 里程碑 */
+.collapse-milestones {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--aitext-split-border, rgba(0,0,0,0.06));
+}
+
+.ms-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-color-2, #475569);
+  margin-bottom: 5px;
+}
+
+.ms-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ms-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+}
+
+.ms-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #6366f1;
+  flex-shrink: 0;
+}
+
+.ms-name {
+  font-weight: 500;
+  color: var(--text-color-1, #0f172a);
+  flex: 1;
+}
+
+.ms-range {
+  font-size: 10.5px;
+  color: var(--text-color-3, #94a3b8);
+  font-family: monospace;
+  flex-shrink: 0;
+}
+
+.panel-graph {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 </style>

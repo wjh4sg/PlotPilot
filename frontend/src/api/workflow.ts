@@ -5,6 +5,29 @@
 import { apiClient } from './config'
 import type { JobStatusResponse } from '../types/api'
 
+export interface StorylineMilestoneDTO {
+  order: number
+  title: string
+  description?: string
+  target_chapter_start: number
+  target_chapter_end: number
+  prerequisites: string[]
+  triggers: string[]
+}
+
+export interface StorylineMergePointDTO {
+  chapter_number: number
+  storyline_ids: string[]
+  merge_type: 'convergence' | 'divergence'
+  description?: string
+}
+
+export interface StorylineGraphDataDTO {
+  storylines: StorylineDTO[]
+  merge_points: StorylineMergePointDTO[]
+  total_chapters: number
+}
+
 export interface StorylineDTO {
   id: string
   storyline_type: string
@@ -13,6 +36,10 @@ export interface StorylineDTO {
   estimated_chapter_end: number
   name?: string
   description?: string
+  milestones?: StorylineMilestoneDTO[]
+  current_milestone_index?: number
+  last_active_chapter?: number
+  progress_summary?: string
 }
 
 export interface MainPlotOptionDTO {
@@ -282,6 +309,10 @@ export const workflowApi = {
   /** GET /api/v1/novels/{novel_id}/storylines */
   getStorylines: (novelId: string) =>
     apiClient.get<StorylineDTO[]>(`/novels/${novelId}/storylines`) as unknown as Promise<StorylineDTO[]>,
+
+  /** GET /api/v1/novels/{novel_id}/storylines/graph-data (Git Graph 全量数据) */
+  getStorylineGraphData: (novelId: string) =>
+    apiClient.get<StorylineGraphDataDTO>(`/novels/${novelId}/storylines/graph-data`) as unknown as Promise<StorylineGraphDataDTO>,
 
   /** POST /api/v1/novels/{novel_id}/setup/suggest-main-plot-options */
   suggestMainPlotOptions: (novelId: string) =>

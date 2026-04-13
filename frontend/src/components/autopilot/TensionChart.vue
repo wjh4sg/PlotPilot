@@ -4,20 +4,54 @@
       <n-tag v-if="hasLowTension" type="warning" size="small">
         ⚠️ 检测到低张力章节
       </n-tag>
+      <n-button v-if="tensionData.length > 0" size="tiny" quaternary @click="loadTensionData">↻</n-button>
     </template>
 
-    <div ref="chartRef" class="chart-container"></div>
+    <!-- 加载态 -->
+    <div v-if="loading" class="chart-container chart-loading">
+      <n-spin size="small" />
+      <span class="chart-loading-text">加载张力曲线…</span>
+    </div>
+
+    <!-- 空状态 -->
+    <div v-else-if="!tensionData.length" class="chart-container chart-empty">
+      <n-empty description="暂无张力数据" size="small">
+        <template #icon><span style="font-size:36px">📈</span></template>
+        <template #extra>
+          <n-text depth="3" style="font-size:11px">写作章节后自动生成张力评分</n-text>
+        </template>
+      </n-empty>
+    </div>
+
+    <!-- 图表 -->
+    <div v-else ref="chartRef" class="chart-container" />
 
     <!-- 低张力警告 -->
-    <n-alert v-if="hasLowTension" type="warning" :show-icon="false" style="margin-top: 8px; font-size: 12px">
-      建议插入缓冲章或调整剧情节奏
+    <n-alert v-if="hasLowTension && !loading" type="warning" :show-icon="false" style="margin-top: 8px; font-size: 12px">
+      第 {{ lowTensionChapters.join('、') }} 章张力偏低 · 建议插入缓冲章或调整剧情节奏
     </n-alert>
+
+    <!-- 底部统计 -->
+    <div v-if="tensionData.length > 0" class="chart-stats">
+      <n-space :size="12" align="center">
+        <n-text depth="3" style="font-size:10px">
+          {{ tensionData.length }} 章 · 均值 {{ avgTension.toFixed(1) }} · 峰值 {{ maxTension.toFixed(1) }}
+        </n-text>
+        <n-divider vertical style="margin:0" />
+        <n-text
+          :style="{ fontSize: '10px', color: getTensionColor(avgTension) }"
+        >
+          {{ getTensionLabel(avgTension) }}
+        </n-text>
+      </n-space>
+    </div>
   </n-card>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
+import { monitorApi } from '../../api/monitor'
 
 interface TensionData {
   chapter_number: number
@@ -27,7 +61,7 @@ interface TensionData {
 
 const props = defineProps<{
   novelId: string
-  threshold?: number  // 张力警戒线，默认 5.0
+  threshold?: number
 }>()
 
 const emit = defineEmits<{
@@ -38,6 +72,7 @@ const emit = defineEmits<{
 const chartRef = ref<HTMLElement | null>(null)
 const tensionData = ref<TensionData[]>([])
 const loading = ref(false)
+const error = ref<string | null>(null)
 
 let chartInstance: echarts.ECharts | null = null
 
@@ -45,119 +80,135 @@ let chartInstance: echarts.ECharts | null = null
 const tensionThreshold = computed(() => props.threshold ?? 5.0)
 
 // 是否有低张力章节
-const hasLowTension = computed(() => {
-  return tensionData.value.some(d => d.tension_score < tensionThreshold.value)
-})
+const hasLowTension = computed(() =>
+  tensionData.value.some(d => d.tension_score < tensionThreshold.value)
+)
 
 // 低张力章节列表
-const lowTensionChapters = computed(() => {
-  return tensionData.value
+const lowTensionChapters = computed(() =>
+  tensionData.value
     .filter(d => d.tension_score < tensionThreshold.value)
     .map(d => d.chapter_number)
+)
+
+// 统计
+const avgTension = computed(() => {
+  if (!tensionData.value.length) return 0
+  const sum = tensionData.value.reduce((s, d) => s + d.tension_score, 0)
+  return sum / tensionData.value.length
 })
 
-// 加载张力数据
+const maxTension = computed(() => {
+  if (!tensionData.value.length) return 0
+  return Math.max(...tensionData.value.map(d => d.tension_score))
+})
+
+// ==================== 加载 ====================
 async function loadTensionData() {
   loading.value = true
+  error.value = null
   try {
-    const res = await fetch(`/api/v1/novels/${props.novelId}/monitor/tension-curve`)
-    if (res.ok) {
-      const data = await res.json()
-      // 转换新 API 格式到组件格式
-      tensionData.value = (data.points || []).map((p: any) => ({
-        chapter_number: p.chapter,
-        tension_score: p.tension,
-        title: p.title
-      }))
+    // 使用 apiClient（走 Vite proxy）而非裸 fetch
+    const data = await monitorApi.getTensionCurve(props.novelId)
+    tensionData.value = (data.points || []).map((p) => ({
+      chapter_number: p.chapter,
+      tension_score: p.tension,
+      title: p.title,
+    }))
 
-      // 触发低张力警告
-      if (lowTensionChapters.value.length > 0) {
-        emit('low-tension-alert', lowTensionChapters.value)
-      }
-
-      await nextTick()
-      renderChart()
+    if (lowTensionChapters.value.length > 0) {
+      emit('low-tension-alert', lowTensionChapters.value)
     }
-  } catch (err) {
-    console.error('Failed to load tension data:', err)
+
+    // 等 DOM 更新后再渲染图表（解决第五章后不显示的关键）
+    await nextTick()
+    // 再等一帧确保容器尺寸已计算
+    setTimeout(() => renderChart(), 50)
+  } catch (err: any) {
+    console.error('[TensionChart] Failed to load:', err)
+    error.value = err?.message || String(err)
+    tensionData.value = []
   } finally {
     loading.value = false
   }
 }
 
-// 渲染图表
+// ==================== 渲染 ====================
 function renderChart() {
   if (!chartRef.value || tensionData.value.length === 0) return
+
+  // 确保 DOM 可见且有尺寸
+  const rect = chartRef.value.getBoundingClientRect()
+  if (rect.width < 10 || rect.height < 10) {
+    // 容器不可见，延迟重试
+    setTimeout(() => renderChart(), 200)
+    return
+  }
 
   if (!chartInstance) {
     chartInstance = echarts.init(chartRef.value)
   }
 
-  const chapterNumbers = tensionData.value.map(d => d.chapter_number)
-  const tensionScores = tensionData.value.map(d => d.tension_score)
+  const chapterNumbers = tensionData.value.map((d) => d.chapter_number)
+  const tensionScores = tensionData.value.map((d) => d.tension_score)
 
   const option: echarts.EChartsOption = {
     grid: {
-      left: 40,
-      right: 20,
-      top: 30,
-      bottom: 30
+      left: 36,
+      right: 16,
+      top: 24,
+      bottom: 28,
+      containLabel: false,
     },
     xAxis: {
       type: 'category',
       data: chapterNumbers,
       name: '章节',
       nameLocation: 'middle',
-      nameGap: 25,
-      axisLine: {
-        lineStyle: { color: '#666' }
-      },
+      nameGap: 22,
+      nameTextStyle: { color: '#888', fontSize: 10 },
+      axisLine: { lineStyle: { color: '#444' } },
+      axisTick: { show: true, lineStyle: { color: '#555' } },
       axisLabel: {
         color: '#999',
-        fontSize: 11
-      }
+        fontSize: 10,
+        interval: chapterNumbers.length > 15 ? 'auto' : 0,
+        rotate: chapterNumbers.length > 20 ? 45 : 0,
+      },
+      boundaryGap: false,
     },
     yAxis: {
       type: 'value',
-      name: '张力值',
+      name: '张力',
       min: 0,
       max: 10,
       interval: 2,
-      axisLine: {
-        lineStyle: { color: '#666' }
-      },
-      axisLabel: {
-        color: '#999',
-        fontSize: 11
-      },
-      splitLine: {
-        lineStyle: {
-          color: '#333',
-          type: 'dashed'
-        }
-      }
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: '#888', fontSize: 10 },
+      splitLine: { lineStyle: { color: '#333', type: 'dashed' } },
     },
     series: [
       {
         type: 'line',
         data: tensionScores,
-        smooth: true,
+        smooth: 0.4,
         symbol: 'circle',
-        symbolSize: 6,
-        lineStyle: {
-          width: 2,
-          color: '#18a058'
+        symbolSize: (value: number[], params: any) => {
+          // 当前点高亮
+          return params.dataIndex === tensionScores.length - 1 ? 8 : 5
         },
+        lineStyle: { width: 2.5, color: '#18a058' },
         itemStyle: {
           color: '#18a058',
           borderWidth: 2,
-          borderColor: '#fff'
+          borderColor: '#fff',
         },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(24, 160, 88, 0.3)' },
-            { offset: 1, color: 'rgba(24, 160, 88, 0.05)' }
-          ])
+            { offset: 0, color: 'rgba(24, 160, 88, 0.25)' },
+            { offset: 1, color: 'rgba(24, 160, 88, 0.02)' },
+          ]),
         },
         markLine: {
           silent: true,
@@ -166,124 +217,96 @@ function renderChart() {
             formatter: '警戒线',
             position: 'end',
             color: '#f0a020',
-            fontSize: 11
+            fontSize: 10,
           },
-          lineStyle: {
-            color: '#f0a020',
-            type: 'dashed',
-            width: 2
-          },
-          data: [
-            { yAxis: tensionThreshold.value }
-          ]
+          lineStyle: { color: '#f0a020', type: 'dashed', width: 1.5 },
+          data: [{ yAxis: tensionThreshold.value }],
         },
         markPoint: {
           symbol: 'pin',
-          symbolSize: 40,
-          label: {
-            fontSize: 10,
-            color: '#fff'
-          },
+          symbolSize: 36,
+          label: { fontSize: 9, color: '#fff' },
           data: [
-            {
-              type: 'max',
-              name: '最高',
-              itemStyle: { color: '#d03050' }
-            },
-            {
-              type: 'min',
-              name: '最低',
-              itemStyle: { color: '#666' }
-            }
-          ]
-        }
-      }
+            { type: 'max', name: '最高', itemStyle: { color: '#d03050' } },
+            { type: 'min', name: '最低', itemStyle: { color: '#666' } },
+          ],
+        },
+      },
     ],
     tooltip: {
       trigger: 'axis',
-      backgroundColor: 'rgba(0, 0, 0, 0.8)',
-      borderColor: '#333',
-      textStyle: {
-        color: '#fff',
-        fontSize: 12
-      },
+      backgroundColor: 'rgba(0, 0, 0, 0.85)',
+      borderColor: '#444',
+      textStyle: { color: '#fff', fontSize: 12 },
+      confine: true, // 防止 tooltip 超出画布
       formatter: (params: any) => {
-        const data = params[0]
-        const chapterNum = data.name
-        const tension = data.value
-        const chapter = tensionData.value.find(d => d.chapter_number === Number(chapterNum))
+        const pt = params[0]
+        const chNum = pt.name
+        const tension = pt.value as number
+        const ch = tensionData.value.find((d) => d.chapter_number === Number(chNum))
 
-        let html = `<div style="padding: 4px 8px;">
-          <div style="font-weight: 600; margin-bottom: 4px;">第 ${chapterNum} 章</div>`
-
-        if (chapter?.title) {
-          html += `<div style="color: #aaa; font-size: 11px; margin-bottom: 6px;">${chapter.title}</div>`
-        }
-
-        html += `<div style="display: flex; align-items: center; gap: 8px;">
-          <span style="color: ${getTensionColor(tension)};">张力值: ${tension.toFixed(1)}</span>
-          <span style="color: #666;">|</span>
-          <span style="color: #aaa; font-size: 11px;">${getTensionLabel(tension)}</span>
-        </div>`
-
-        if (tension < tensionThreshold.value) {
-          html += `<div style="color: #f0a020; font-size: 11px; margin-top: 4px;">⚠️ 低于警戒线</div>`
-        }
-
+        let html = `<div style="padding:4px 8px"><b>第 ${chNum} 章</b>`
+        if (ch?.title) html += `<br/><span style="color:#aaa;font-size:11px">${ch.title}</span>`
+        html += `<br/><span style="color:${getTensionColor(tension)}">▲ ${tension.toFixed(1)}</span>`
+        html += ` <span style="color:#666">${getTensionLabel(tension)}</span>`
+        if (tension < tensionThreshold.value) html += `<br/><span style="color:#f0a020">⚠️ 低于警戒</span>`
         html += `</div>`
         return html
-      }
-    }
+      },
+    },
+    animationDuration: 600,
+    animationEasing: 'cubicOut',
   }
 
-  chartInstance.setOption(option)
+  chartInstance.setOption(option, true)
 
   // 点击事件
   chartInstance.off('click')
   chartInstance.on('click', (params: any) => {
     if (params.componentType === 'series') {
-      const chapterNumber = Number(params.name)
-      emit('chapter-click', chapterNumber)
+      emit('chapter-click', Number(params.name))
     }
   })
 }
 
-// 获取张力颜色
-function getTensionColor(tension: number): string {
-  if (tension >= 8) return '#d03050'
-  if (tension >= 5) return '#f0a020'
+function getTensionColor(t: number): string {
+  if (t >= 8) return '#d03050'
+  if (t >= 5) return '#f0a020'
   return '#18a058'
 }
 
-// 获取张力标签
-function getTensionLabel(tension: number): string {
-  if (tension >= 8) return '🔥 高潮'
-  if (tension >= 5) return '⚡冲突'
+function getTensionLabel(t: number): string {
+  if (t >= 8) return '🔥 高潮'
+  if (t >= 5) return '⚡ 冲突'
   return '🌊 平缓'
 }
 
-// 响应式调整
 function handleResize() {
   chartInstance?.resize()
 }
 
-// 监听数据变化
-watch(() => props.novelId, () => {
-  loadTensionData()
-})
+// ==================== 监听 ====================
+watch(() => props.novelId, () => void loadTensionData())
 
+// 数据变化时重新渲染（防抖）
+let resizeTimer: ReturnType<typeof setTimeout> | null = null
 watch(tensionData, () => {
-  renderChart()
+  if (resizeTimer) clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(() => {
+    renderChart()
+    resizeTimer = null
+  }, 100)
 })
 
-// 生命周期
+// ==================== 生命周期 ====================
 onMounted(() => {
-  loadTensionData()
+  void loadTensionData()
   window.addEventListener('resize', handleResize)
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
+  if (resizeTimer) clearTimeout(resizeTimer)
   chartInstance?.dispose()
   chartInstance = null
 })
@@ -292,6 +315,35 @@ onUnmounted(() => {
 <style scoped>
 .chart-container {
   width: 100%;
-  height: 220px;
+  height: 200px;
+  position: relative;
+}
+
+.chart-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 6px;
+}
+
+.chart-loading-text {
+  font-size: 11px;
+  color: var(--text-color-3);
+}
+
+.chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 0;
+}
+
+.chart-stats {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--n-border-color, rgba(0,0,0,0.08));
 }
 </style>

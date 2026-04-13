@@ -48,7 +48,7 @@
             @keydown.enter.prevent="doSearch"
           />
           <n-button size="small" secondary :loading="searching" @click="doSearch">检索</n-button>
-          <n-button size="small" quaternary @click="useHitToComposer" :disabled="!selectedHit">
+          <n-button size="small" quaternary @click="useHitToComposer" :disabled="!searchHits.length">
             引用到输入框
           </n-button>
         </n-space>
@@ -57,14 +57,24 @@
             v-for="(h, i) in searchHits"
             :key="h.id || i"
             class="kp-hit"
-            :class="{ active: selectedHit === h }"
-            @click="selectedHit = h"
+            :class="{ active: expandedIndex === i, collapsed: expandedIndex >= 0 && expandedIndex !== i }"
+            @click="expandedIndex = expandedIndex === i ? -1 : i"
           >
             <div class="kp-hit-meta">
-              <n-tag size="tiny" round :bordered="false">{{ h.meta?.type || '资料' }}</n-tag>
-              <span class="kp-hit-id">{{ h.meta?.id || h.id || '' }}</span>
+              <n-tag size="tiny" round :bordered="false" :type="h.meta?.match_type === 'semantic' ? 'success' : 'default'">
+                {{ h.meta?.match_type === 'semantic' ? '向量' : '文本' }}
+              </n-tag>
+              <n-tag v-if="h.meta?.score != null" size="tiny" round :bordered="false" type="info">
+                {{ (h.meta.score * 100).toFixed(0) }}%
+              </n-tag>
+              <span v-if="h.meta?.chapter_id" class="kp-hit-ch">第{{ h.meta.chapter_id }}章</span>
             </div>
-            <div class="kp-hit-text">{{ h.text }}</div>
+            <div class="kp-hit-text" :class='{ "kp-hit-collapsed": expandedIndex >= 0 && expandedIndex !== i }'>
+              {{ (expandedIndex === i || expandedIndex < 0) ? h.text : (h.text.length > 60 ? h.text.slice(0, 60) + '…' : h.text) }}
+            </div>
+          </div>
+          <div v-if="searchHits.length > 1" class="kp-search-more">
+            共 {{ searchHits.length }} 条结果 · 点击切换展开
           </div>
         </div>
         <div v-else-if="!searching" class="kp-search-empty">
@@ -426,10 +436,20 @@ interface Ch {
   sync_status: string
 }
 
+interface Fact {
+  id: string
+  subject: string
+  predicate: string
+  object: string
+  chapter_id: number | null
+  note: string
+}
+
 const data = ref({
   version: 1,
   premise_lock: '',
   chapters: [] as Ch[],
+  facts: [] as Fact[],
 })
 
 const saving = ref(false)
@@ -548,16 +568,16 @@ const outlineTitles = ref<Record<number, string>>({})
 const searchQ = ref('')
 const searching = ref(false)
 const searchHits = ref<any[]>([])
-const selectedHit = ref<any | null>(null)
+const expandedIndex = ref(0) // 默认展开第一条
 
 const doSearch = async () => {
   const q = searchQ.value.trim()
   if (!q) return
   searching.value = true
+  expandedIndex.value = 0 // 每次搜索重置为展开第一条
   try {
     const r = await knowledgeApi.searchKnowledge(props.slug, q, 8)
     searchHits.value = r.hits || []
-    selectedHit.value = searchHits.value[0] || null
   } catch (e: any) {
     message.error(e?.response?.data?.detail || '检索失败')
   } finally {
@@ -566,10 +586,10 @@ const doSearch = async () => {
 }
 
 const useHitToComposer = () => {
-  if (!selectedHit.value) return
-  const t = String(selectedHit.value.text || '').trim()
+  const h = expandedIndex.value >= 0 ? searchHits.value[expandedIndex.value] : null
+  if (!h) return
+  const t = String(h.text || '').trim()
   if (!t) return
-  // Workbench.vue 监听该事件，将文本插入输入框
   window.dispatchEvent(new CustomEvent('aitext:composer:insert', { detail: { text: t } }))
   message.success('已引用到输入框')
 }
@@ -1149,6 +1169,37 @@ onUnmounted(() => {
   font-size: 13px;
   line-height: 1.5;
   color: #374151;
+}
+
+.kp-hit-text.kp-hit-collapsed {
+  max-height: 22px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  opacity: 0.55;
+}
+
+.kp-hit.collapsed {
+  padding: 6px 10px;
+  background: transparent;
+  border-color: transparent;
+}
+
+.kp-hit.collapsed:hover {
+  background: #f9fafb;
+  border-color: #e5e7eb;
+}
+
+.kp-hit-ch {
+  font-size: 10px;
+  color: #9ca3af;
+}
+
+.kp-search-more {
+  text-align: center;
+  font-size: 11px;
+  color: #9ca3af;
+  padding: 4px 0 0;
 }
 
 .kp-search-empty {

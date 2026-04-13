@@ -138,7 +138,7 @@
         </n-space>
 
         <div v-show="spoView === 'storylines'" class="spo-view-embed">
-          <StorylinePanel :slug="slug" />
+          <StorylinePanel :slug="slug" :current-chapter="currentChapter" />
         </div>
         <div v-show="spoView === 'plotArc'" class="spo-view-embed">
           <PlotArcPanel :slug="slug" />
@@ -157,7 +157,7 @@ import type { StorylineDTO, PlotArcDTO, PlotPointDTO } from '../../api/workflow'
 import StorylinePanel from './StorylinePanel.vue'
 import PlotArcPanel from './PlotArcPanel.vue'
 
-const props = defineProps<{ slug: string }>()
+const props = defineProps<{ slug: string; currentChapter?: number | null }>()
 
 type SpoView = 'charts' | 'storylines' | 'plotArc'
 const spoView = ref<SpoView>('charts')
